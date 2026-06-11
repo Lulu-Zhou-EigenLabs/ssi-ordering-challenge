@@ -67,3 +67,6 @@
 1781163618	OK	0.803639	0.925742	
 1781163652	OK	0.803639	0.925742	simplified refine, 30 passes
 1781163685	OK	0.803639	0.925742	try ND vs AMD for medium KKTs, pick lower fill
+1781163745	OK	0.871252	0.956995	include grid2d_30 in ND, large leaf for small grids
+1781163778	OK	0.803639	0.925742	verify 0.8036
+1781163797	OK	0.803639	0.925742	final clean: 0.8036

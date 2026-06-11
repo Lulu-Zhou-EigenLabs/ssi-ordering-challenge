@@ -78,35 +78,6 @@ fn order_nd(adj: &[Vec<usize>], n: usize) -> Vec<usize> {
     perm
 }
 
-fn estimate_fill(adj: &[Vec<usize>], perm: &[usize]) -> u64 {
-    let n = adj.len();
-    let mut inv_perm = vec![0usize; n];
-    for (i, &v) in perm.iter().enumerate() {
-        inv_perm[v] = i;
-    }
-
-    let mut fill: u64 = 0;
-    let mut elim_adj: Vec<Vec<usize>> = adj.to_vec();
-    let mut eliminated = vec![false; n];
-
-    for &v in perm {
-        let neigh: Vec<usize> = elim_adj[v].iter().copied().filter(|&u| !eliminated[u]).collect();
-        eliminated[v] = true;
-
-        for i in 0..neigh.len() {
-            for j in (i + 1)..neigh.len() {
-                let (a, b) = (neigh[i], neigh[j]);
-                if !elim_adj[a].contains(&b) {
-                    elim_adj[a].push(b);
-                    elim_adj[b].push(a);
-                    fill += 1;
-                }
-            }
-        }
-        elim_adj[v].clear();
-    }
-    fill
-}
 
 const ND_THRESHOLD: usize = 200;
 
