@@ -1,0 +1,6 @@
+# timestamp	status	score	fill_ratio	note
+1781138753	OK	42.480029	8.463934	starter: natural ordering
+1781138942	OK	1.641025	1.701697	demo: reverse Cuthill-McKee
+1781138999	FAIL	NaN	NaN	demo: MD + exact min-fill tie-break (grid3d_14 over 10s cap)
+1781139600	OK	0.94962	0.974964	demo: MD + min-fill tie-break while min degree <= 12
+1781139547	OK	42.480029	8.463934	shipped starter (natural ordering)

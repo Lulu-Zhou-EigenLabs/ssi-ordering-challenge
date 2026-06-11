@@ -1,0 +1,13 @@
+[package]
+name = "ssi-ordering-challenge"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Fill-reducing ordering challenge for sparse symmetric indefinite factorization"
+
+# CONTRACT: no dependencies. Submissions are pure Rust, stdlib only.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+debug = false

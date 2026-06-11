@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Edit(src/ordering/**)",
+      "Bash(cargo build --release*)",
+      "Bash(cargo run --release*)",
+      "Bash(cargo test --release*)",
+      "Bash(git add src/ordering/*)",
+      "Bash(git commit*)",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": [
+      "Edit(src/main.rs)",
+      "Edit(src/symbolic.rs)",
+      "Edit(src/baseline.rs)",
+      "Edit(src/pattern.rs)",
+      "Edit(Cargo.toml)",
+      "Edit(results.tsv)",
+      "Edit(.claude/**)",
+      "Bash(curl *)",
+      "Bash(wget *)"
+    ]
+  }
+}
