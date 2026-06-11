@@ -208,38 +208,39 @@ fn nd_bisect(adj: &[Vec<usize>], alive: &[usize]) -> (Vec<usize>, Vec<usize>, Ve
 
     // Strategy 4: BFS from midpoint of diameter
     let max_level_s = levels_s.iter().copied().max().unwrap_or(0);
-    {
-        let target_level = max_level_s / 2;
-        if target_level > 0 && target_level < max_level_s {
-            let mut mid_vertex = None;
-            let mut mid_deg = usize::MAX;
-            for i in 0..ns {
-                if levels_s[i] == target_level && local_adj[i].len() < mid_deg {
-                    mid_deg = local_adj[i].len();
-                    mid_vertex = Some(i);
-                }
+    for &numer in &[2u64] {
+        let target_level = (max_level_s as u64 * numer / 4) as usize;
+        if target_level == 0 || target_level >= max_level_s {
+            continue;
+        }
+        let mut mid_vertex = None;
+        let mut mid_deg = usize::MAX;
+        for i in 0..ns {
+            if levels_s[i] == target_level && local_adj[i].len() < mid_deg {
+                mid_deg = local_adj[i].len();
+                mid_vertex = Some(i);
             }
-            if let Some(mv) = mid_vertex {
-                let levels_m = bfs_levels_local(&local_adj, ns, mv);
-                let (mid, _) = best_level_cut(&levels_m, ns);
-                if mid > 0 {
-                    let mut pa = Vec::new();
-                    let mut pb = Vec::new();
-                    let mut sep = Vec::new();
-                    for (i, &v) in alive.iter().enumerate() {
-                        if levels_m[i] < mid {
-                            pa.push(v);
-                        } else if levels_m[i] > mid {
-                            pb.push(v);
-                        } else {
-                            sep.push(v);
-                        }
+        }
+        if let Some(mv) = mid_vertex {
+            let levels_m = bfs_levels_local(&local_adj, ns, mv);
+            let (mid, _) = best_level_cut(&levels_m, ns);
+            if mid > 0 {
+                let mut pa = Vec::new();
+                let mut pb = Vec::new();
+                let mut sep = Vec::new();
+                for (i, &v) in alive.iter().enumerate() {
+                    if levels_m[i] < mid {
+                        pa.push(v);
+                    } else if levels_m[i] > mid {
+                        pb.push(v);
+                    } else {
+                        sep.push(v);
                     }
-                    let score = partition_score(&pa, &pb, &sep);
-                    if score < best_sep_score && !pa.is_empty() && !pb.is_empty() && !sep.is_empty() {
-                        best_sep_score = score;
-                        best_partition = Some((pa, pb, sep));
-                    }
+                }
+                let score = partition_score(&pa, &pb, &sep);
+                if score < best_sep_score && !pa.is_empty() && !pb.is_empty() && !sep.is_empty() {
+                    best_sep_score = score;
+                    best_partition = Some((pa, pb, sep));
                 }
             }
         }
@@ -287,7 +288,7 @@ fn best_level_cut(levels: &[usize], ns: usize) -> (usize, f64) {
         if balance < 0.10 {
             continue;
         }
-        let score = sep_size as f64 / ns as f64 + 0.15 * (0.5 - balance).abs();
+        let score = sep_size as f64 / ns as f64 + 0.12 * (0.5 - balance).abs();
         if score < best_score {
             best_score = score;
             best_mid = mid;
