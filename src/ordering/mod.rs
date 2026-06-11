@@ -78,6 +78,36 @@ fn order_nd(adj: &[Vec<usize>], n: usize) -> Vec<usize> {
     perm
 }
 
+fn estimate_fill(adj: &[Vec<usize>], perm: &[usize]) -> u64 {
+    let n = adj.len();
+    let mut inv_perm = vec![0usize; n];
+    for (i, &v) in perm.iter().enumerate() {
+        inv_perm[v] = i;
+    }
+
+    let mut fill: u64 = 0;
+    let mut elim_adj: Vec<Vec<usize>> = adj.to_vec();
+    let mut eliminated = vec![false; n];
+
+    for &v in perm {
+        let neigh: Vec<usize> = elim_adj[v].iter().copied().filter(|&u| !eliminated[u]).collect();
+        eliminated[v] = true;
+
+        for i in 0..neigh.len() {
+            for j in (i + 1)..neigh.len() {
+                let (a, b) = (neigh[i], neigh[j]);
+                if !elim_adj[a].contains(&b) {
+                    elim_adj[a].push(b);
+                    elim_adj[b].push(a);
+                    fill += 1;
+                }
+            }
+        }
+        elim_adj[v].clear();
+    }
+    fill
+}
+
 const ND_THRESHOLD: usize = 200;
 
 fn nd_recurse(adj: &[Vec<usize>], alive: &[usize], perm: &mut Vec<usize>) {
@@ -319,8 +349,9 @@ fn refine_separator(
         side[local_id[v]] = 2;
     }
 
-    for _pass in 0..20 {
-        let mut improved = false;
+    // Iteratively peel separator nodes that only connect to one side
+    for _pass in 0..30 {
+        let mut changed = false;
 
         for i in 0..ns {
             if side[i] != 2 {
@@ -337,19 +368,20 @@ fn refine_separator(
             }
             if a_nbrs > 0 && b_nbrs == 0 {
                 side[i] = 0;
-                improved = true;
+                changed = true;
             } else if b_nbrs > 0 && a_nbrs == 0 {
                 side[i] = 1;
-                improved = true;
+                changed = true;
             }
         }
 
-        if !improved {
+        if !changed {
             break;
         }
 
+        // Restore separator property: mark A/B nodes adjacent to the other side
         for i in 0..ns {
-            if side[i] == 2 {
+            if side[i] >= 2 {
                 continue;
             }
             let my_side = side[i];

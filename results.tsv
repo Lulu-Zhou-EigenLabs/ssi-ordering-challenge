@@ -62,3 +62,8 @@
 1781163467	OK	0.811591	0.931613	BFS from 1/4, 1/2, 3/4 diameter
 1781163484	OK	0.808638	0.929439	confirm 0.8086
 1781163553	OK	0.803639	0.925742	BFS from midpoints of both start and end trees
+1781163579	OK	0.809374	0.929200	pick max-deg midpoint vertex
+1781163611	OK	0.803639	0.925742	high-degree nodes last for KKT
+1781163618	OK	0.803639	0.925742	
+1781163652	OK	0.803639	0.925742	simplified refine, 30 passes
+1781163685	OK	0.803639	0.925742	try ND vs AMD for medium KKTs, pick lower fill
