@@ -206,17 +206,18 @@ fn nd_bisect(adj: &[Vec<usize>], alive: &[usize]) -> (Vec<usize>, Vec<usize>, Ve
         }
     }
 
-    // Strategy 4: BFS from midpoint of diameter
+    // Strategy 4+5: BFS from midpoints of start and end BFS trees
     let max_level_s = levels_s.iter().copied().max().unwrap_or(0);
-    for &numer in &[2u64] {
-        let target_level = (max_level_s as u64 * numer / 4) as usize;
-        if target_level == 0 || target_level >= max_level_s {
+    let max_level_e = levels_e.iter().copied().max().unwrap_or(0);
+    for (levels_ref, max_lev) in [(&levels_s, max_level_s), (&levels_e, max_level_e)] {
+        let target_level = max_lev / 2;
+        if target_level == 0 || target_level >= max_lev {
             continue;
         }
         let mut mid_vertex = None;
         let mut mid_deg = usize::MAX;
         for i in 0..ns {
-            if levels_s[i] == target_level && local_adj[i].len() < mid_deg {
+            if levels_ref[i] == target_level && local_adj[i].len() < mid_deg {
                 mid_deg = local_adj[i].len();
                 mid_vertex = Some(i);
             }

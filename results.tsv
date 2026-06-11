@@ -61,3 +61,4 @@
 1781163434	OK	0.810896	0.930859	best_level_cut penalty 0.10
 1781163467	OK	0.811591	0.931613	BFS from 1/4, 1/2, 3/4 diameter
 1781163484	OK	0.808638	0.929439	confirm 0.8086
+1781163553	OK	0.803639	0.925742	BFS from midpoints of both start and end trees
