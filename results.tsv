@@ -4,3 +4,54 @@
 1781138999	FAIL	NaN	NaN	demo: MD + exact min-fill tie-break (grid3d_14 over 10s cap)
 1781139600	OK	0.94962	0.974964	demo: MD + min-fill tie-break while min degree <= 12
 1781139547	OK	42.480029	8.463934	shipped starter (natural ordering)
+1781161101	OK	42.480029	8.463934	smoke test
+1781161326	OK	1.194553	1.097577	ND+AMD hybrid v1
+1781161445	OK	0.897746	1.000433	ND for grids, AMD for KKT, arrow detect
+1781161463	OK	0.897746	1.000433	ND threshold 500, AMD for small + KKT
+1781161484	OK	0.897582	0.999988	no FM refinement
+1781161501	OK	0.902486	0.988447	ND only for n>=2000
+1781161527	OK	0.891886	0.989031	ND threshold 200, grid cutoff 900
+1781161543	OK	0.861303	0.964940	ND cutoff 1000
+1781161574	OK	3.433785	1.841207	KKT detection: primal first, dual last
+1781161597	OK	0.861303	0.964940	KKT detect: no mutual edges among duals
+1781161621	OK	0.849785	0.961187	min-fill tiebreak threshold 8
+1781161635	OK	0.847676	0.959749	min-fill tiebreak threshold 10
+1781161653	OK	0.854437	0.963202	min-fill tiebreak threshold 9
+1781161799	OK	0.836371	0.950337	clean ND+AMD: two-end BFS, separator refine
+1781161821	OK	0.839599	0.954845	ND threshold 150
+1781161849	OK	0.870801	0.975564	grid cutoff 800 (include grid2d_30)
+1781161925	OK	0.834250	0.948949	ND: distance-difference bisection option
+1781161970	OK	0.834250	0.948949	verify same score
+1781162032	OK	1.050207	1.075233	coordinate-based ND for known 2D/3D grids
+1781162050	OK	0.834250	0.948949	revert to BFS-ND for all grids
+1781162095	OK	1.677678	1.277728	ND for KKTs too (n>=2000)
+1781162160	OK	0.834189	0.948821	mass elimination for deg<=2
+1781162235	OK	0.824803	0.941927	multi-strategy bisection with midpoint BFS
+1781162262	OK	0.836207	0.948865	multiple BFS sources at 1/4, 2/4, 3/4 diameter
+1781162278	OK	0.824803	0.941927	midpoint only (2/4)
+1781162317	OK	0.825466	0.942801	add equidistant-separator strategy
+1781162337	OK	0.824803	0.941927	verify 0.8248
+1781162364	OK	0.858756	0.966931	include grid2d_30 in ND (threshold 900)
+1781162441	OK	0.824153	0.941497	higher fill threshold for small subproblems
+1781162458	OK	0.824153	0.941497	adaptive fill threshold 20/15/10
+1781162508	OK	0.824100	0.941099	min external deg tiebreak above threshold
+1781162530	OK	0.824153	0.941497	confirm 0.8242
+1781162559	OK	0.828656	0.942948	fill threshold 20/12/10
+1781162574	OK	0.824153	0.941497	confirm 0.8242
+1781162596	OK	0.829629	0.945599	quadratic sep penalty in partition score
+1781162692	OK	1.175536	1.087181	supervariable absorption
+1781162728	OK	0.824153	0.941497	confirm 0.8242 after reverting absorption
+1781162762	OK	0.835664	0.946599	fill threshold 12 with candidate cap 50, early exit
+1781162778	OK	0.841862	0.948714	threshold 10 with cap50 + early exit
+1781162799	OK	0.824153	0.941497	proper early exit in pick_min_fill
+1781162847	OK	0.824153	0.941497	enhanced FM refinement
+1781162874	OK	0.837987	0.943079	ND threshold 250
+1781162905	OK	0.815227	0.933053	lower balance penalty in best_level_cut (0.2)
+1781162919	OK	0.833117	0.942927	balance penalty 0.1
+1781162949	OK	0.813566	0.931919	balance penalty 0.15
+1781162965	OK	0.809742	0.930047	align partition_score to 0.15
+1781162983	OK	0.809742	0.930047	partition_score penalty 0.1
+1781163013	OK	0.809876	0.929932	min balance 0.10
+1781163097	OK	0.809876	0.929932	add 3rd BFS start strategy
+1781163114	OK	0.810441	0.938641	ND threshold 100
+1781163273	OK	0.809876	0.929932	clean version: score 0.8097
