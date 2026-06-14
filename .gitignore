@@ -1,5 +1,6 @@
-# Rust build artifacts
+# Rust build artifacts (workspace root + any stray per-crate target dirs)
 /target
+**/target/
 
 # Harness output — regenerated every run, would create noise/conflicts
 score.json

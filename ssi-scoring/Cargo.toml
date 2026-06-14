@@ -1,0 +1,19 @@
+[package]
+name = "ssi-scoring"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The ONE scoring code path for the SSI ordering challenge: a thin pattern-pure wrapper over feral's symbolic analysis and AMD baseline. Both the local harness and the private grader score by calling this crate."
+
+# THE SCORING WRAPPER. This is the only code in the workspace that calls
+# into feral. It depends on feral by PATH for local development.
+#
+# CONTESTANT SWITCH: to build a fresh fork without the local feral checkout,
+# replace the two path dependencies below with the published crates, e.g.
+#   feral     = "0.11"
+#   feral-amd = "0.2"
+# (see README "Building from a fresh clone"). The scoring API is unchanged.
+[dependencies]
+feral = { path = "../../feral" }
+feral-amd = { path = "../../feral/crates/feral-amd" }
+feral-ordering-core = { path = "../../feral/crates/feral-ordering-core" }

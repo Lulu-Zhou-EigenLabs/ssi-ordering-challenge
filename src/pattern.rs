@@ -1,185 +1,182 @@
-//! Sparsity patterns and the deterministic development corpus.
+//! Sparsity patterns, the development corpus loader, and the public-side
+//! Matrix Market reader.
 //!
-//! HARNESS FILE — do not modify. The pattern type is the only input a
-//! contestant ordering ever sees: structure, never values, never a
-//! right-hand side.
+//! HARNESS FILE — do not modify. The `Pattern` type a contestant ordering sees
+//! is `ssi_scoring::Pattern`, re-exported here so the contract signature
+//! `order(pattern: &Pattern) -> Vec<usize>` is byte-identical to what the
+//! grader scores. It carries structure only — never values, never a
+//! right-hand side (NARROW INPUT, proposal §3.1).
+//!
+//! ## Two readers, proven identical
+//!
+//! The trusted/grader side parses `.mtx` with feral's reference reader
+//! (`ssi_scoring::load_pattern`). This file additionally provides a small
+//! stdlib MatrixMarket reader for the public harness. A cross-check test
+//! (`tests/loader_agreement.rs`) asserts the two produce the SAME `Pattern` on
+//! the shipped dev files, so there is no second parser that can silently
+//! disagree (Phase 3, step 7 — same rule as one-scoring-path).
 
-/// Sparsity pattern of a symmetric matrix, stored as the *full* (both
-/// triangles) pattern in compressed-sparse-column form, diagonal omitted.
+use std::fs;
+use std::path::{Path, PathBuf};
+
+pub use ssi_scoring::Pattern;
+
+/// Directory holding the shipped public development corpus (`.mtx` files).
+pub const DEV_CORPUS_DIR: &str = "corpus/dev";
+
+/// Read a Matrix Market `.mtx` file into a `Pattern` using a small stdlib
+/// reader. Accepts only `%%MatrixMarket matrix coordinate real symmetric`
+/// (case-insensitive banner, like feral's reader). Indices convert 1-based →
+/// 0-based; values are parsed-past and IGNORED (the score is pattern-only,
+/// Phase 1 R6 / Phase 2 D3). The diagonal is dropped; entries are symmetrized.
+pub fn read_mtx_pattern(path: &Path) -> Result<Pattern, String> {
+    let contents =
+        fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    parse_mtx_pattern(&contents)
+}
+
+/// Parse Matrix Market content (banner + size line + `row col value` triplets)
+/// into a `Pattern`. Separated from file IO so it is unit-testable.
+pub fn parse_mtx_pattern(contents: &str) -> Result<Pattern, String> {
+    let mut lines = contents.lines();
+
+    // Banner: tokenize case-insensitively (matches feral's tolerant reader).
+    let header = lines.next().ok_or("empty file")?;
+    const BANNER: [&str; 5] = [
+        "%%matrixmarket",
+        "matrix",
+        "coordinate",
+        "real",
+        "symmetric",
+    ];
+    let mut toks = header.split_whitespace();
+    let banner_ok = BANNER
+        .iter()
+        .all(|exp| toks.next().is_some_and(|t| t.eq_ignore_ascii_case(exp)))
+        && toks.next().is_none();
+    if !banner_ok {
+        return Err(format!(
+            "unsupported header '{}' (expected: %%MatrixMarket matrix coordinate real symmetric)",
+            header.trim()
+        ));
+    }
+
+    // Size line: first non-comment, non-empty line.
+    let mut size_line = None;
+    for line in lines.by_ref() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('%') {
+            continue;
+        }
+        size_line = Some(t.to_string());
+        break;
+    }
+    let size_text = size_line.ok_or("missing size line")?;
+    let parts: Vec<&str> = size_text.split_whitespace().collect();
+    if parts.len() != 3 {
+        return Err(format!("expected 'rows cols nnz', got '{size_text}'"));
+    }
+    let n: usize = parts[0].parse().map_err(|_| "invalid row count")?;
+    let n_cols: usize = parts[1].parse().map_err(|_| "invalid col count")?;
+    if n != n_cols {
+        return Err(format!("not square: {n} rows, {n_cols} cols"));
+    }
+
+    // Entries: "row col value". 1-based → 0-based. Value token IGNORED.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for line in lines {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('%') {
+            continue;
+        }
+        let mut it = t.split_whitespace();
+        let r1: usize = it
+            .next()
+            .ok_or("entry missing row")?
+            .parse()
+            .map_err(|_| "invalid row index")?;
+        let c1: usize = it
+            .next()
+            .ok_or("entry missing col")?
+            .parse()
+            .map_err(|_| "invalid col index")?;
+        // A value token is required by the format but the score ignores it.
+        if r1 < 1 || r1 > n || c1 < 1 || c1 > n {
+            return Err(format!("entry ({r1},{c1}) out of range 1..={n}"));
+        }
+        let (r, c) = (r1 - 1, c1 - 1);
+        if r == c {
+            continue; // diagonal dropped
+        }
+        // Symmetrize: store both triangles regardless of which was given.
+        adj[c].push(r);
+        adj[r].push(c);
+    }
+
+    Ok(pattern_from_adjacency(n, adj))
+}
+
+/// Build a `Pattern` from per-vertex adjacency lists, sorting + deduplicating
+/// each column. Uses only `Pattern`'s public fields, so the harness reader
+/// needs no privileged access to ssi-scoring internals.
+fn pattern_from_adjacency(n: usize, mut adj: Vec<Vec<usize>>) -> Pattern {
+    let mut col_ptr = Vec::with_capacity(n + 1);
+    let mut row_idx = Vec::new();
+    col_ptr.push(0);
+    for list in adj.iter_mut() {
+        list.sort_unstable();
+        list.dedup();
+        row_idx.extend_from_slice(list);
+        col_ptr.push(row_idx.len());
+    }
+    Pattern { n, col_ptr, row_idx }
+}
+
+/// Load the shipped development corpus: every `.mtx` under `DEV_CORPUS_DIR`,
+/// sorted by family/name for a deterministic run order.
 ///
-/// Invariants (enforced by the constructor):
-/// - `col_ptr.len() == n + 1`
-/// - row indices within each column are sorted, unique, in `0..n`,
-///   and never equal to the column index
-/// - the pattern is structurally symmetric: (i,j) present iff (j,i) present
-#[derive(Clone)]
-pub struct Pattern {
-    pub n: usize,
-    pub col_ptr: Vec<usize>,
-    pub row_idx: Vec<usize>,
-}
-
-impl Pattern {
-    /// Build a symmetric pattern from an edge list. Each (r, c) pair is
-    /// symmetrized, deduplicated, and the diagonal is dropped.
-    pub fn from_edges(n: usize, edges: &[(usize, usize)]) -> Pattern {
-        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
-        for &(r, c) in edges {
-            assert!(r < n && c < n, "edge out of range");
-            if r == c {
-                continue;
-            }
-            adj[c].push(r);
-            adj[r].push(c);
-        }
-        let mut col_ptr = Vec::with_capacity(n + 1);
-        let mut row_idx = Vec::new();
-        col_ptr.push(0);
-        for list in adj.iter_mut() {
-            list.sort_unstable();
-            list.dedup();
-            row_idx.extend_from_slice(list);
-            col_ptr.push(row_idx.len());
-        }
-        Pattern { n, col_ptr, row_idx }
-    }
-
-    /// Off-diagonal structural nonzeros (both triangles).
-    pub fn nnz(&self) -> usize {
-        self.row_idx.len()
-    }
-
-    /// Iterate row indices of column `j`.
-    pub fn col(&self, j: usize) -> &[usize] {
-        &self.row_idx[self.col_ptr[j]..self.col_ptr[j + 1]]
-    }
-}
-
-/// Deterministic 64-bit LCG so the corpus is identical on every machine.
-pub struct Lcg(u64);
-
-impl Lcg {
-    pub fn new(seed: u64) -> Lcg {
-        Lcg(seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(1))
-    }
-    pub fn next_u64(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        self.0 >> 11
-    }
-    pub fn below(&mut self, m: usize) -> usize {
-        (self.next_u64() % m as u64) as usize
-    }
-}
-
-/// 2D 5-point finite-difference grid (k × k Laplacian pattern).
-pub fn grid2d(k: usize) -> Pattern {
-    let n = k * k;
-    let mut edges = Vec::new();
-    for x in 0..k {
-        for y in 0..k {
-            let v = x * k + y;
-            if x + 1 < k {
-                edges.push((v, (x + 1) * k + y));
-            }
-            if y + 1 < k {
-                edges.push((v, x * k + y + 1));
-            }
-        }
-    }
-    Pattern::from_edges(n, &edges)
-}
-
-/// 3D 7-point finite-difference grid (k × k × k).
-pub fn grid3d(k: usize) -> Pattern {
-    let n = k * k * k;
-    let idx = |x: usize, y: usize, z: usize| (x * k + y) * k + z;
-    let mut edges = Vec::new();
-    for x in 0..k {
-        for y in 0..k {
-            for z in 0..k {
-                let v = idx(x, y, z);
-                if x + 1 < k {
-                    edges.push((v, idx(x + 1, y, z)));
-                }
-                if y + 1 < k {
-                    edges.push((v, idx(x, y + 1, z)));
-                }
-                if z + 1 < k {
-                    edges.push((v, idx(x, y, z + 1)));
-                }
-            }
-        }
-    }
-    Pattern::from_edges(n, &edges)
-}
-
-/// Saddle-point / KKT pattern:  [ H  Aᵀ ]
-///                              [ A  0  ]
-/// H is an nh×nh banded pattern with random extra couplings; A is an
-/// m×nh constraint Jacobian pattern with a few entries per row. The
-/// (2,2) block is structurally zero — the shape that makes these
-/// matrices indefinite and ordering-sensitive in interior-point methods.
-pub fn kkt(nh: usize, m: usize, seed: u64) -> Pattern {
-    let n = nh + m;
-    let mut rng = Lcg::new(seed);
-    let mut edges = Vec::new();
-    let bw = 40; // coupling bandwidth — KKTs from discretized problems are local
-    // H block: tridiagonal band + ~2 nearby random couplings per row
-    for i in 0..nh {
-        if i + 1 < nh {
-            edges.push((i, i + 1));
-        }
-        for _ in 0..2 {
-            let off = 1 + rng.below(bw);
-            let j = if rng.below(2) == 0 { i.saturating_sub(off) } else { (i + off).min(nh - 1) };
-            if j != i {
-                edges.push((i, j));
-            }
-        }
-    }
-    // A block: each constraint touches 3–6 primal variables in a local window
-    for c in 0..m {
-        let row = nh + c;
-        let center = c * nh / m;
-        let deg = 3 + rng.below(4);
-        for _ in 0..deg {
-            let off = rng.below(2 * bw);
-            let j = (center + off).min(nh - 1);
-            edges.push((row, j));
-        }
-    }
-    Pattern::from_edges(n, &edges)
-}
-
-/// Arrow matrix: one hub vertex adjacent to every other vertex, plus a
-/// chain. The canonical example of why ordering matters: eliminating the
-/// hub first produces a completely dense factor; eliminating it last
-/// produces almost no fill.
-pub fn arrow(n: usize) -> Pattern {
-    let mut edges = Vec::new();
-    for v in 1..n {
-        edges.push((0, v));
-        if v + 1 < n {
-            edges.push((v, v + 1));
-        }
-    }
-    Pattern::from_edges(n, &edges)
-}
-
-/// A named development corpus, generated deterministically at startup.
+/// The scored run parses with the public stdlib reader (`read_mtx_pattern`).
+/// The grader parses with feral's reference reader (`ssi_scoring::load_pattern`).
+/// `tests/loader_agreement.rs` asserts the two produce byte-identical `Pattern`s
+/// on every shipped dev file, so the two parsers can never silently disagree —
+/// exact-grader equivalence is preserved at the parsing boundary too (step 7).
 pub fn dev_corpus() -> Vec<(String, Pattern)> {
-    vec![
-        ("arrow_2000".to_string(), arrow(2000)),
-        ("grid2d_30".to_string(), grid2d(30)),
-        ("grid2d_60".to_string(), grid2d(60)),
-        ("grid2d_90".to_string(), grid2d(90)),
-        ("grid3d_10".to_string(), grid3d(10)),
-        ("grid3d_14".to_string(), grid3d(14)),
-        ("kkt_600_200".to_string(), kkt(600, 200, 42)),
-        ("kkt_2000_700".to_string(), kkt(2000, 700, 7)),
-        ("kkt_4000_1500".to_string(), kkt(4000, 1500, 99)),
-    ]
+    let root = PathBuf::from(DEV_CORPUS_DIR);
+    let mut files = Vec::new();
+    collect_mtx(&root, &mut files);
+    files.sort();
+    files
+        .into_iter()
+        .map(|path| {
+            let name = corpus_name(&root, &path);
+            let pat = read_mtx_pattern(&path)
+                .unwrap_or_else(|e| panic!("load {}: {e}", path.display()));
+            (name, pat)
+        })
+        .collect()
+}
+
+/// Short display name for a corpus file: `family/stem` (e.g. `bratu/bratu_n2050`).
+fn corpus_name(root: &Path, path: &Path) -> String {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    let mut s = rel.with_extension("").to_string_lossy().replace('\\', "/");
+    // Strip the "__iterN" suffix the corpus generator appends for readability.
+    if let Some(pos) = s.find("__iter") {
+        s.truncate(pos);
+    }
+    s
+}
+
+fn collect_mtx(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_mtx(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("mtx") {
+            out.push(path);
+        }
+    }
 }

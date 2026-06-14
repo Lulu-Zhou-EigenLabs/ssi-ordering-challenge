@@ -1,8 +1,10 @@
-# Harness Design — Local Prototype → Production Grader
+# Harness Design — Contestant Template & Production Grader
 
-This document explains how the test harness in this repository works, how an
-AI agent (or human) uses it as a feedback loop, and what changes between this
-local prototype and the production grader of `COMPETITION-PROPOSAL.md`.
+This document explains how the harness in this repository works, how an AI
+agent (or human) uses it as a feedback loop, and how it relates to the
+production grader of `COMPETITION-PROPOSAL.md`. As of Phase 3 the harness is
+**feral-backed**: the score and the AMD baseline are computed by feral's own
+symbolic analysis, via the `ssi-scoring` crate that the grader also uses.
 
 ---
 
@@ -13,86 +15,88 @@ local prototype and the production grader of `COMPETITION-PROPOSAL.md`.
    recomputes everything from that permutation; there is no number the
    contestant could fake.
 2. **Narrow input.** The function sees the sparsity pattern only — no
-   values, no right-hand side, no labels. The "answer" does not exist in
-   the contestant's address space.
+   values, no right-hand side, no labels. The `Pattern` type has no field for
+   values; the loader drops them. Asserted in `tests/narrow_input.rs`.
 3. **Correctness is decoupled.** Any bijection of `0..n` factors correctly;
    the contestant can only move the cost. This makes the whole search space
    safe for unattended agents to explore.
-4. **Fail loudly, never silently.** Invalid permutation, panic,
-   nondeterminism, or a time-cap violation fails the entire run with a
-   one-line reason. No partial credit, no silent fallback an agent could
-   accidentally rely on.
-5. **Determinism end to end.** The corpus is generated from fixed seeds, the
-   scorer is a pure function, and the contestant code is run twice and
-   required to agree — so the same submission scores identically on every
-   machine, every time.
+4. **Fail loudly, never silently.** Purity/license violation, invalid
+   permutation, panic, nondeterminism, or a time-cap violation fails the
+   entire run with a one-line reason. No partial credit, no silent fallback.
+5. **One scoring path.** The harness and the grader both score by calling the
+   same functions in `ssi-scoring`. The score is a pure function of
+   `(pattern, permutation)`, so a local score equals the graded score for the
+   same ordering on the same matrices (exact-grader equivalence).
 
 ## 2. Architecture
 
 ```
-ssi-ordering-challenge/
-├── Cargo.toml            CONTRACT: zero dependencies, stable Rust
+ssi-ordering-challenge/            (THE PUBLIC REPO / contestant template)
+├── Cargo.toml            workspace root; harness package + members          [frozen]
+├── deny.toml             shared license policy (cargo-deny)                  [frozen]
 ├── src/
-│   ├── main.rs           harness driver (stages, caps, scoring, output)   [frozen]
-│   ├── pattern.rs        Pattern type + deterministic corpus generators   [frozen]
-│   ├── symbolic.rs       trusted scorer: etree + column counts → flops    [frozen]
-│   ├── baseline.rs       frozen minimum-degree baseline + validator       [frozen]
+│   ├── main.rs           harness driver (gate, stages, caps, scoring, output)[frozen]
+│   ├── pattern.rs        Pattern re-export + public .mtx reader + corpus     [frozen]
+│   ├── purity.rs         local Stage-A purity & license gate                 [frozen]
 │   └── ordering/         ★ contestant code — the only editable directory
-│       ├── mod.rs        pub fn order(&Pattern) -> Vec<usize>
-│       └── memory/       agent notes across iterations
+│       ├── mod.rs        pub fn order(&Pattern) -> Vec<usize>  (starter stub)
+│       └── memory/       agent notes + a reference ND+AMD demo
+├── ssi-scoring/          THE SCORING WRAPPER (trusted; also used by grader)  [frozen]
+│   └── src/
+│       ├── lib.rs        score(), amd_baseline() via feral building blocks
+│       ├── pattern.rs    the Pattern type (structure only)
+│       └── loader.rs     load_pattern() via feral's reference .mtx reader
+├── prototype-oracle/     dev-only INDEPENDENT scorer, for the cross-check test
+├── corpus/dev/           the shipped development corpus (216 .mtx files)
 ├── results.tsv           append-only run log (timestamp, status, score, note)
 ├── score.json            latest score, machine-readable
 └── docs/HARNESS-DESIGN.md
 ```
 
-Per matrix, `main.rs` executes the five grader stages of the proposal in
-miniature:
+Per run, `main.rs` executes the grader stages of the proposal in miniature:
 
-| Proposal stage | Prototype implementation |
+| Proposal stage | Harness implementation |
 |---|---|
-| A — purity & license gate | enforced socially here (`[dependencies]` empty); enforced mechanically in production (`cargo-deny`, no-FFI scan, offline vendored registry) |
-| B — sandboxed compile & run | plain `cargo run` here, with the 10 s/matrix **time cap** enforced in-process; production adds a no-network/no-filesystem sandbox and a 2–4 GB memory cap |
+| A — purity & license gate | `purity::check`: scans `src/ordering/` for build.rs / FFI / `#[no_mangle]` / `#[link]` / proc-macros / `include!` escapes / added dependencies, and runs `cargo-deny` against `deny.toml` (fallback to a dependency scan if cargo-deny is absent). Mirrors the grader's authoritative Stage A — same rules, same `deny.toml`. |
+| B — sandboxed compile & run | plain `cargo run` here, with the 5 s/matrix **time cap** enforced in-process; the production grader adds a no-network/no-filesystem sandbox and a 2–4 GB memory cap |
 | C — output validation | `validate_permutation`: exact bijection check; panics caught via `catch_unwind` |
-| D — trusted scoring | `symbolic::analyze`: elimination tree (Liu 1986, path compression) + O(nnz(L)) row-subtree column counts → `nnz(L)` and `flops = Σ cⱼ²`, computed from the permutation alone |
+| D — trusted scoring | `ssi_scoring::score`: feral's pattern-pure building blocks — `symmetric_pattern → permute_pattern → EliminationTree::from_pattern → column_counts_gnp`, then `nnz(L) = Σ cⱼ` and `flops = Σ cⱼ²`, computed from the permutation alone |
 | E — reproducibility | the ordering is run twice per matrix; outputs must be identical |
 
 **Score** = geometric mean over the corpus of
-`flops(contestant) / flops(baseline)`, tie-broken by the geomean fill ratio.
-The geometric mean keeps any single matrix (e.g. the arrow's 148,366×
-blowup) from dominating: it contributes one log-term like every other
-matrix.
+`flops(contestant) / flops(AMD)`, tie-broken by the geomean fill ratio.
+The geometric mean keeps any single matrix from dominating: it contributes one
+log-term like every other matrix.
 
 ### The trusted scorer in one paragraph
 
-Given pattern A and permutation P, the scorer materializes the permuted
-pattern B = PAPᵀ (O(nnz)), builds the elimination tree of B with ancestor
-path compression, then computes the exact per-column nonzero counts of the
-Cholesky/LDLᵀ factor L by the row-subtree traversal: L(i,k) ≠ 0 exactly when
-k lies on the etree path from some j (B(i,j) ≠ 0, j < i) up to i. Total work
-O(nnz(L)) — 1–2 orders of magnitude cheaper than the numeric factorization
-it predicts, which is what makes grading cheap (cf.
-`COMPETITION-VERIFIER-COST.md`: ~ms per matrix, seconds per full run). The
-flop proxy Σⱼ cⱼ² is a deterministic, hardware-independent stand-in for the
-LDLᵀ operation count; since the score is a *ratio* against the baseline
-under the same model, the model's constant factors cancel.
+`ssi-scoring` is the only code in the workspace that calls feral. Given a
+pattern A and permutation P it does **not** call `feral::symbolic_factorize`
+(whose default ordering is AMF/MetisND and whose `LdltCompress` preprocess can
+read matrix *values* via MC64 matching — Phase 1 R5). Instead it composes
+feral's already-public, pattern-only building blocks, which is feral's own fill
+computation: permute the full-symmetric pattern, build the elimination tree
+(Liu 1986), compute exact per-column counts of L by Gilbert–Ng–Peyton, and sum
+to `nnz(L) = Σ cⱼ` and `flops = Σ cⱼ²`. Supernode amalgamation never enters
+(counts are computed before it, and fill is invariant under its within-subtree
+relabeling — Phase 1 §2), so there is no amalgamation knob to tune. Both the
+contestant permutation and the AMD baseline (`feral_amd::amd_order`, default
+options, pattern-pure) go through this identical path. Symbolic analysis is
+1–2 orders of magnitude cheaper than the numeric factorization it predicts,
+which is what makes grading cheap (cf. `COMPETITION-VERIFIER-COST.md`).
 
 ### The corpus
 
-Generated deterministically at startup (no data files, no network):
-
-- **2D grids** (30², 60², 90² five-point Laplacians) and **3D grids**
-  (10³, 14³ seven-point) — where nested dissection provably wins and
-  minimum degree is known to be suboptimal: the headroom is real and
-  certified by theory (George 1973: O(n log n) fill vs MD's worse behavior).
-- **Saddle-point KKT patterns** ([[H Aᵀ],[A 0]] with banded local coupling,
-  three sizes) — the indefinite structure the production corpus consists of;
-  the zero (2,2) block punishes naive orderings.
-- **The arrow** — the canonical showcase and a tripwire: any ordering that
-  mishandles dense rows is instantly visible.
+`corpus/dev/` — 216 real KKT / saddle-point patterns harvested from
+interior-point solves (Phase 2), stratified across size buckets and families
+(`ampl`, `bratu`, `optctrl`, `poisson`, `rosenbrock`, `sparseqp`), n from 38 to
+~160,000. Files are MatrixMarket `coordinate real symmetric` with dummy values
+(the score uses pattern only; the loader ignores values). The grader scores a
+disjoint, hidden evaluation slice from the same distribution. The synthetic
+generators of the prototype (`arrow`, `grid2d`, `grid3d`, `kkt`) survive only
+as `cargo test` fixtures in the `prototype-oracle` crate.
 
 ## 3. The agent feedback loop
-
-The loop an agent runs is exactly the ecdsa.fail loop:
 
 ```
 edit src/ordering/  →  cargo run --release -- --note "hypothesis"
@@ -102,84 +106,57 @@ edit src/ordering/  →  cargo run --release -- --note "hypothesis"
               write findings to src/ordering/memory/
 ```
 
-Three properties of the harness make this loop productive for an agent:
+The per-matrix table shows the flop ratio per matrix, so an agent can attribute
+wins/losses by family (KKT size buckets, the analytic families) and form
+targeted hypotheses. Failure messages name the offending matrix and reason
+(cap violation, invalid permutation, purity hit), pointing directly at the fix.
 
-1. **Per-matrix attribution.** The table shows the ratio per matrix, so an
-   agent sees *where* a change helped (e.g. "0.76 on grid2d_90, 1.22 on
-   grid3d_14") and can form family-specific hypotheses, not just watch one
-   scalar.
-2. **Failure messages are actionable.** "`kkt_2000_700: ordering took
-   14.69s, cap is 10s`" or "`index 5 appears more than once`" point directly
-   at the fix. This was validated live: the demo trajectory below includes a
-   real cap violation and its repair.
-3. **Cheap iterations.** A full run is < 1 s of scoring plus the contestant's
-   own ordering time; the Rust compile dominates. Hundreds of iterations per
-   hour are realistic.
-
-### A real four-iteration trajectory (recorded in `results.tsv`)
-
-| iter | change | score | feedback used |
-|---|---|---|---|
-| 0 | starter: natural ordering | **42.48** | arrow ratio 148,366× ⇒ dense-row handling matters |
-| 1 | reverse Cuthill–McKee | **1.64** | grids improved most; KKTs still ≫1 ⇒ bandwidth ≠ fill |
-| 2 | MD + exact min-fill tie-break | **FAIL** | `grid3d_14: ordering took 26.05s, cap is 10s` — O(d²) per candidate blows up as 3D degrees grow |
-| 3 | tie-break only while min degree ≤ 12 | **0.9496** | beats the baseline: grid2d_90 0.593, KKTs 0.93–0.97; still loses on grid3d_14 (1.20) and kkt_4000_1500 (1.06) ⇒ next: nested dissection |
-
-The full notes live in `src/ordering/memory/2026-06-10-demo-trajectory.md`
-as a worked example of the memory convention.
-
-## 4. Anti-cheat analysis of the prototype
+## 4. Anti-cheat analysis
 
 | attack | defense |
 |---|---|
-| report a fake score | impossible — contestant returns a permutation; the frozen scorer derives the score |
-| return a malformed/partial permutation hoping for leniency | Stage C bijection check fails the run |
+| report a fake score | impossible — contestant returns a permutation; feral's scorer derives the score |
+| return a malformed/partial permutation | Stage C bijection check fails the run |
 | nondeterministic ordering that "gets lucky" | Stage E double-run equality check |
-| stall/explore unboundedly | 10 s/matrix cap, enforced and demonstrated |
-| read the answer / RHS | doesn't exist: the input type carries pattern only |
+| stall/explore unboundedly | 5 s/matrix cap, enforced in-process |
+| read the answer / RHS | doesn't exist: `Pattern` carries structure only; loader drops values |
 | hardcode permutations for the corpus | works locally by design (it's the *dev* corpus); defeated in production by the hidden, per-round-regenerated eval corpus + memory cap |
-| edit the harness/baseline | local honor system; production grader rebuilds the harness from its own trusted copy and only takes `src/ordering/` from the submission |
-| escape to non-Rust code / deps | `[dependencies]` empty here; production Stage A rejects build scripts, `*-sys` crates, FFI, and non-permissive licenses, and builds offline |
+| edit the harness/scorer/baseline | local honor system; the grader rebuilds the harness and `ssi-scoring` from its own trusted copy and takes only `src/ordering/` from the submission |
+| escape to non-Rust code / deps | `purity::check` rejects build scripts, FFI, `#[no_mangle]`/`#[link]`, proc-macros, and added dependencies in `src/ordering/`; `cargo-deny` rejects non-permissive licenses; the production grader builds offline against a vendored registry |
 
-## 5. Path to the production grader
+## 5. What still differs in the production grader
 
-What changes, in order of importance — nothing about the contract changes:
+Nothing about the contract, the metric, the baseline, or the scoring path
+changes — those are shared via `ssi-scoring`. The grader adds:
 
-1. **Swap the scorer**: replace `symbolic.rs` with a call into feral's
-   symbolic analysis (`symbolic_factorize`), so the score is feral's own
-   predicted flop/fill model — the one the leaderboard advertises. The
-   `feral-grader` binary of the proposal is this harness with that one
-   substitution plus corpus loading.
-2. **Swap the baseline**: `baseline.rs`'s exact minimum degree → feral's
-   AMD. (Exact MD is the algorithm AMD approximates; scores shift slightly
-   but the anchor stays 1.00 by construction.)
-3. **Swap the corpus**: synthetic generators → a stratified ~500-matrix
-   hidden slice of feral's ~183k IPM-harvested KKT corpus (4 size buckets ×
-   family, per `COMPETITION-VERIFIER-COST.md`), with a disjoint public dev
-   slice shipped in the starter template, and per-round fresh regeneration
-   (patterns only — no reference labeling needed).
-4. **Harden the sandbox**: contestant crate compiled offline against a
-   vendored registry, run with no network/filesystem, 2–4 GB memory cap
-   (which doubles as the anti-lookup-table cap), `cargo-deny` license gate,
-   static no-FFI scan.
-5. **Wire the leaderboard**: PR/upload → CI runs stages A–E → one number
+1. **The hidden eval corpus**: a disjoint, stratified, per-round-regenerated
+   slice from the same IPM-harvested distribution (Phase 2 built the pipeline;
+   `grader/` holds it). Patterns only — no reference labeling needed.
+2. **The sandbox**: contestant crate compiled offline against a vendored
+   registry, run with no network/filesystem, 2–4 GB memory cap (which doubles
+   as the anti-lookup-table cap).
+3. **The leaderboard wiring**: PR/upload → CI runs stages A–E → one number
    posted; anchors AMD = 1.00 with METIS-style nested dissection and MUMPS
-   fill as reference lines. Submission UX mirrors ecdsa.fail (CLI: clone /
-   run / submit; `score.json` and `results.tsv` formats are already
-   compatible).
+   fill as reference lines.
 
-Per `COMPETITION-VERIFIER-COST.md`, the production economics hold:
-compile-dominated ~3–5 min/submission, embarrassingly parallel scoring,
-fractions of a cent per submission.
+The local purity/license gate (`purity.rs` + `deny.toml`) is the same code and
+policy the grader's Stage A uses, so a submission that passes locally passes the
+server's gate.
 
-## 6. Known prototype limitations (deliberate)
+## 6. Verification built into `cargo test`
 
-- The flop model is Σ cⱼ² rather than feral's exact LDLᵀ count — fine for a
-  ratio metric, replaced wholesale in step 1 above.
-- The baseline exact-MD is O(n) scan per pivot and clique-based — adequate
-  for the dev corpus sizes (≤ 8.1k), not for 10⁵-row production matrices;
-  replaced in step 2.
-- Supernode amalgamation (the proposal's optional second seam) is not
-  modeled; it arrives for free with feral's symbolic engine in step 1.
-- The synthetic KKT generator uses banded locality; real IPM KKTs have
-  richer structure — replaced in step 3.
+- **Closed-form scorer tests** (`ssi-scoring`): dense 3×3 → flops 14;
+  tridiagonal → nnz(L) = 2n−1; arrow hub-first → n(n+1)/2; hub-last →
+  near-zero fill. Mathematical facts (Invariant 4), ported to the feral scorer.
+- **Scorer cross-check** (`tests/scorer_crosscheck.rs`): the feral scorer and
+  the independent `prototype-oracle` scorer agree exactly on `nnz(L)` and
+  `flops` across grids, 3D grids, KKTs, and the arrow, under identity, reverse,
+  and AMD orderings.
+- **Loader agreement** (`tests/loader_agreement.rs`): the public stdlib `.mtx`
+  reader and feral's reference reader produce byte-identical `Pattern`s on all
+  216 dev files — no second parser can silently disagree.
+- **Exact equivalence** (`tests/exact_equivalence.rs`): pinned `(nnz_l, flops)`
+  for the identity ordering on three committed dev files, so any drift between
+  local and grader scoring breaks the build immediately.
+- **Narrow input** (`tests/narrow_input.rs`): different values, identical
+  pattern ⇒ identical score; the value column is never consulted.

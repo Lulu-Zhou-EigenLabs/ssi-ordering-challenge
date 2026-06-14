@@ -2,9 +2,9 @@
 
 > **Goal.** Given only the *sparsity pattern* of a sparse symmetric indefinite
 > matrix, produce the elimination order that makes its LDLᵀ factorization
-> cheapest, scored by **predicted factorization flops**, recomputed by a
-> trusted symbolic analyzer. Lower is better. The baseline (minimum degree)
-> is anchored at **1.00**.
+> cheapest, scored by **predicted factorization flops**, recomputed by feral's
+> own symbolic analysis. Lower is better. The baseline — feral's Approximate
+> Minimum Degree (AMD) ordering — is anchored at **1.00**.
 
 A companion challenge to the [feral](https://github.com/jkitchin/feral)
 sparse symmetric indefinite solver, in the spirit of
@@ -40,57 +40,29 @@ produces a correct, solvable factorization with the same inertia. A
 contestant cannot break the solver — they can only make it cheaper or more
 expensive. The entire search space is safe to explore.
 
-## A concrete example: the arrow matrix
-
-Take an n×n "arrow" matrix — one hub variable coupled to all n−1 others,
-which form a chain:
-
-```
-        natural order (hub first)          hub eliminated last
-        ┌ x x x x x x ┐                    ┌ x x         . ┐
-        │ x x x       │                    │ x x x       . │
-        │ x   x x     │   eliminate        │   x x x     . │
-        │ x     x x   │   the hub    →     │     x x x   . │
-        │ x       x x │   first: every     │       x x x . │
-        └ x         x ┘   pair couples     └ . . . . . x x ┘
-                          → L is DENSE         → almost no fill
-```
-
-Eliminating the hub first makes every remaining pair structurally coupled:
-L becomes completely dense, n(n+1)/2 nonzeros. Eliminating the hub *last*
-leaves the factor nearly as sparse as A. Measured by this repo's harness on
-`arrow_2000` (n = 2,000):
-
-| ordering            | predicted flops | ratio vs baseline |
-|---------------------|-----------------|-------------------|
-| natural (hub first) | 2,668,667,000   | **148,366×**      |
-| minimum degree      | 17,987          | 1.00              |
-
-Same matrix, same factorization algorithm, five-orders-of-magnitude cost
-difference — purely from the permutation. Real KKT matrices are subtler
-versions of this: the zero (2,2) block of a saddle-point system punishes
-naive orders the way the arrow's hub does.
-
 ## The benchmark, precisely
 
-You are given a Rust harness that, for each matrix in a deterministic
-development corpus (2D/3D grid Laplacians, saddle-point KKT patterns, and
-the arrow), does the following:
+You are given a Rust harness that, for each matrix in a development corpus
+(real KKT / saddle-point patterns harvested from interior-point solves —
+`corpus/dev/`, 216 matrices, n from 38 to ~160,000), does the following:
 
-1. **Runs** the frozen baseline ordering and scores it symbolically.
+0. **Gates** your submission with a local **purity & license check** (a subset
+   of the production grader's Stage A): `src/ordering/` must be stdlib-only,
+   with no build scripts, FFI, proc-macros, or extra dependencies, and the
+   dependency licenses must be permissive (checked with `cargo-deny`).
+1. **Runs** feral's AMD baseline ordering and scores it.
 2. **Calls** your `ordering::order(&Pattern) -> Vec<usize>` — *twice*. Both
    runs must return identical permutations (determinism gate) within the
-   10 s per-matrix time cap.
+   per-matrix time cap (5 s).
 3. **Validates** your permutation as a true bijection of `0..n` — wrong
    length, duplicates, or out-of-range indices fail the run, as does a panic.
-4. **Recomputes** the score from your permutation with the trusted symbolic
-   analyzer (elimination tree + exact column counts of L, Liu 1986 /
-   Gilbert–Ng–Peyton; see Davis 2006, ch. 4). Your code never reports a
-   number — it returns a permutation, and the harness derives everything
-   else.
+4. **Recomputes** the score from your permutation with feral's own symbolic
+   analysis (elimination tree + exact Gilbert–Ng–Peyton column counts of L).
+   Your code never reports a number — it returns a permutation, and the
+   harness derives everything else.
 5. **Scores** the run as
 
-   **score = geomean over matrices of flops(yours) / flops(baseline)**
+   **score = geomean over matrices of flops(yours) / flops(AMD)**
 
    where `flops = Σⱼ cⱼ²` over the column counts cⱼ of L (a deterministic,
    hardware-independent proxy proportional to the LDLᵀ operation count).
@@ -98,15 +70,30 @@ the arrow), does the following:
    nnz(L). The score is written to `score.json` and a row is appended to
    `results.tsv`.
 
+### One scoring path, shared with the grader
+
+Both the local harness and the private grader compute the score by calling the
+**same** functions in the `ssi-scoring` crate — feral's pattern-pure symbolic
+building blocks (`symmetric_pattern → permute_pattern → EliminationTree →
+column_counts_gnp`, then `nnz(L) = Σ cⱼ`, `flops = Σ cⱼ²`). The score is a pure
+function of `(pattern, permutation)`, so **the number you see locally is the
+number the grader computes** for the same ordering on the same matrices. There
+is no separate code path that could drift.
+
+The AMD baseline is pinned to `feral_amd::amd_order` on the raw full-symmetric
+pattern with default options — deterministic and pattern-only (it never reads
+matrix values), so the anchor reproduces exactly from a pattern file.
+
 ### What "valid" means
 
 A run is rejected — not scored worse, *rejected* — if any of the following
 fails on any matrix:
 
+- **Purity/license.** `src/ordering/` must be stdlib-only and license-clean.
 - **Bijection.** The permutation must contain each of `0..n` exactly once.
 - **Determinism.** Two runs on the same pattern must agree exactly.
-- **Time cap.** 10 s per matrix (annealing and learned orderings are
-  welcome; runaways are not).
+- **Time cap.** 5 s per matrix (annealing and learned orderings are welcome;
+  runaways are not).
 - **No panics.**
 
 There are no loopholes: the input is the pattern only (no values, no
@@ -115,20 +102,24 @@ your output, computed by code you cannot touch.
 
 ### Reference numbers
 
-Measured by this harness, on the shipped corpus:
+Measured by this harness, on the shipped 216-matrix dev corpus:
 
-| ordering                                  | score (geomean flop ratio) |
-|-------------------------------------------|----------------------------|
-| natural / identity (the shipped starter)  | 42.48                      |
-| reverse Cuthill–McKee                     | 1.64                       |
-| **minimum degree (frozen baseline)**      | **1.00**                   |
-| demo: MD + degree-bounded min-fill tie-break | **0.9496** (best so far; grid2d_90 at 0.593) |
-| nested dissection (METIS-class), expected | ≈ 0.5–0.8 on grids — unclaimed |
+| ordering                                       | score (geomean flop ratio vs AMD) |
+|------------------------------------------------|-----------------------------------|
+| natural / identity (the shipped starter)       | **15.91**                         |
+| **feral AMD (baseline)**                        | **1.00**                          |
+| nested dissection (METIS-class), expected       | ≈ 0.5–0.9 on the larger/grid-like patterns — unclaimed |
 
-The baseline has been beaten once, by ~5% — there is plenty of headroom
-(the demo still *loses* on the 3D grids and the largest KKT). On the
-production grader the baseline is feral's AMD and reference lines for
-METIS-style nested dissection and MUMPS are shown.
+The starter loses badly (15.91×) because the natural order eliminates dense
+KKT constraint rows early and densifies the factor. Beating AMD (score < 1.00)
+is the game; nested dissection is the classic lead on the larger patterns.
+
+> Note on the demo in `memory/`: `memory/demo_nd_amd_hybrid.rs.txt` is a
+> nested-dissection + minimum-degree ordering that beat the *previous*
+> synthetic corpus, but its exact minimum-degree inner loop is O(n²) per pivot
+> and **exceeds the 5 s cap on the largest real matrices** (n ≈ 160k). It is a
+> source of ideas, not a drop-in — a production ordering needs a
+> quotient-graph (AMD-style) inner loop to stay within budget at scale.
 
 ## How to play
 
@@ -136,12 +127,31 @@ METIS-style nested dissection and MUMPS are shown.
 cargo run --release -- --note "what I tried"
 ```
 
-That single command builds, validates, scores, writes `score.json`, and
-appends one row to `results.tsv` with timestamp, status, score, fill ratio,
-and your note.
+That single command runs the purity/license gate, scores every dev matrix,
+writes `score.json`, and appends one row to `results.tsv` with timestamp,
+status, score, fill ratio, and your note.
 
-`cargo test --release` runs the harness's self-checks (including the arrow
-sanity tests) — useful for verifying your toolchain before iterating.
+`cargo test --release` runs the harness's self-checks (closed-form scorer
+tests, the scorer cross-check against an independent oracle, loader agreement,
+exact-equivalence pins) — useful for verifying your toolchain before iterating.
+
+### Building from a fresh clone
+
+The scoring wrapper (`ssi-scoring/`) depends on feral. For local development in
+this workspace it uses **path** dependencies. To build a standalone fork that
+is not next to a feral checkout, flip the two dependencies in
+`ssi-scoring/Cargo.toml` from paths to the published crates:
+
+```toml
+# ssi-scoring/Cargo.toml — contestant switch
+[dependencies]
+feral     = "0.11"
+feral-amd = "0.2"
+feral-ordering-core = "0.2"
+```
+
+Then `cargo build --release` and `cargo run --release` work from a bare clone.
+The scoring API and your `order()` contract are unchanged either way.
 
 ### What you can edit
 
@@ -150,17 +160,20 @@ submodules, rewrite primitives, refactor freely.
 
 You may **not** touch the harness:
 
-- `src/main.rs`, `src/symbolic.rs`, `src/baseline.rs`, `src/pattern.rs` —
-  these are the contract.
-- `Cargo.toml` — **no dependencies**, stdlib only, stable toolchain.
+- `src/main.rs`, `src/pattern.rs`, `src/purity.rs` — the contract and gates.
+- `ssi-scoring/` — the trusted scoring wrapper (also used by the grader).
+- `Cargo.toml` / `deny.toml` — dependency and license policy.
 - `results.tsv` directly (the harness appends to it for you).
+
+The purity gate enforces these mechanically for `src/ordering/`: it rejects
+build scripts, FFI/`extern`, `#[no_mangle]`/`#[link]`, proc-macros, `include!`
+outside the directory, and any added crate dependency.
 
 ### Memory notes
 
 As you iterate, add Markdown notes under `src/ordering/memory/` capturing
 approaches that worked, dead ends, and the reasoning behind important
-choices. `memory/2026-06-10-demo-trajectory.md` documents a four-iteration
-example session, including a time-cap failure and how it was fixed.
+choices.
 
 ### Important note on openness
 
@@ -173,34 +186,31 @@ claims and re-run the benchmark before relying on them.
 - M. Yannakakis, *Computing the minimum fill-in is NP-complete*, SIAM J.
   Alg. Disc. Meth. 2 (1981). — why there is no closed solution.
 - T. A. Davis, *Direct Methods for Sparse Linear Systems*, SIAM, 2006. —
-  the textbook for everything in `symbolic.rs` (elimination trees, column
-  counts, fill).
+  the textbook for elimination trees, column counts, and fill.
 - P. Amestoy, T. A. Davis, I. S. Duff, *An approximate minimum degree
   ordering algorithm*, SIAM J. Matrix Anal. Appl. 17 (1996). — the
-  production baseline.
+  production baseline (feral's AMD).
 - A. George, *Nested dissection of a regular finite element mesh*, SIAM J.
   Numer. Anal. 10 (1973); G. Karypis & V. Kumar, *A fast and high quality
   multilevel scheme for partitioning irregular graphs*, SIAM J. Sci. Comput.
   20 (1998). — the state of the art to beat on grid-like problems.
-- J. W. H. Liu, *A compact row storage scheme for Cholesky factors using
-  elimination trees*, ACM TOMS 12 (1986). — the etree algorithm the scorer
-  uses.
-- I. S. Duff & J. K. Reid, *The multifrontal solution of indefinite sparse
-  symmetric linear systems*, ACM TOMS 9 (1983). — the factorization whose
-  cost you are minimizing.
+- J. R. Gilbert, E. G. Ng, B. W. Peyton, *An efficient algorithm to compute
+  row and column counts for sparse Cholesky factorization*, SIAM J. Matrix
+  Anal. Appl. 15 (1994). — the column-count algorithm feral's scorer uses.
 - A. Wächter & L. T. Biegler, *On the implementation of an interior-point
   filter line-search algorithm*, Math. Program. 106 (2006). — where the KKT
   matrices come from.
 
 ## Relationship to the production competition
 
-This repository is the **local prototype** of the grader described in
-`COMPETITION-PROPOSAL.md`: same contract, same metric, same anti-cheat
-structure. The production version swaps in feral's symbolic analysis and
-AMD baseline, scores on a hidden stratified slice of feral's ~183k
-IPM-harvested KKT corpus (fresh-regenerated per round), and runs submissions
-in a no-network/no-filesystem sandbox behind a purity & license gate. See
-`docs/HARNESS-DESIGN.md` for the full architecture and the migration path.
+This repository is the **contestant-facing template** of the competition
+described in `COMPETITION-PROPOSAL.md`: same contract, same metric, same
+anti-cheat structure, same feral-backed scoring. The private grader scores
+submissions on a hidden, stratified, per-round-regenerated evaluation corpus
+(disjoint from this dev slice, drawn from the same distribution) in a
+no-network/no-filesystem sandbox behind the same purity & license gate, and
+calls the same `ssi-scoring` functions — so a contestant's local score predicts
+the graded score exactly. See `docs/HARNESS-DESIGN.md` for the architecture.
 
 ## License
 
