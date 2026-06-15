@@ -15,6 +15,7 @@ members = ["ssi-scoring", "ssi-purity", "prototype-oracle"]
 # is unreachable from a submission (Invariant 3).
 [dependencies]
 ssi-scoring = { path = "ssi-scoring" }
+ssi-purity = { path = "ssi-purity" }
 
 # Dev-only oracle: the original prototype Σc² scorer + synthetic pattern
 # generators. Used only by the cross-check tests in tests/; never linked into
