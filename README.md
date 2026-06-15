@@ -137,21 +137,13 @@ exact-equivalence pins) — useful for verifying your toolchain before iterating
 
 ### Building from a fresh clone
 
-The scoring wrapper (`ssi-scoring/`) depends on feral. For local development in
-this workspace it uses **path** dependencies. To build a standalone fork that
-is not next to a feral checkout, flip the two dependencies in
-`ssi-scoring/Cargo.toml` from paths to the published crates:
+The scoring wrapper (`ssi-scoring/`) depends on feral via a **pinned git rev** of
+`github.com/jkitchin/feral`, so a fresh clone builds with no local feral checkout
+— `cargo build --release` fetches the exact pinned feral once and caches it. The
+first build needs network access; subsequent builds are offline.
 
-```toml
-# ssi-scoring/Cargo.toml — contestant switch
-[dependencies]
-feral     = "0.11"
-feral-amd = "0.2"
-feral-ordering-core = "0.2"
-```
-
-Then `cargo build --release` and `cargo run --release` work from a bare clone.
-The scoring API and your `order()` contract are unchanged either way.
+The scoring API and your `order()` contract are unchanged regardless of how feral
+is sourced.
 
 ### What you can edit
 
@@ -162,6 +154,7 @@ You may **not** touch the harness:
 
 - `src/main.rs`, `src/pattern.rs`, `src/purity.rs` — the contract and gates.
 - `ssi-scoring/` — the trusted scoring wrapper (also used by the grader).
+- `ssi-purity/` — the shared Stage-A purity gate (also used by the grader).
 - `Cargo.toml` / `deny.toml` — dependency and license policy.
 - `results.tsv` directly (the harness appends to it for you).
 

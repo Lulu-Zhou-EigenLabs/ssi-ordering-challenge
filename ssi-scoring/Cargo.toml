@@ -6,14 +6,12 @@ license = "MIT"
 description = "The ONE scoring code path for the SSI ordering challenge: a thin pattern-pure wrapper over feral's symbolic analysis and AMD baseline. Both the local harness and the private grader score by calling this crate."
 
 # THE SCORING WRAPPER. This is the only code in the workspace that calls
-# into feral. It depends on feral by PATH for local development.
-#
-# CONTESTANT SWITCH: to build a fresh fork without the local feral checkout,
-# replace the two path dependencies below with the published crates, e.g.
-#   feral     = "0.11"
-#   feral-amd = "0.2"
-# (see README "Building from a fresh clone"). The scoring API is unchanged.
+# into feral.
 [dependencies]
-feral = { path = "../../feral" }
-feral-amd = { path = "../../feral/crates/feral-amd" }
-feral-ordering-core = { path = "../../feral/crates/feral-ordering-core" }
+# feral is pinned to a git rev (= the workspace feral/ checkout's HEAD) so a
+# prepared tree copied anywhere by the grader builds without a local feral
+# checkout or path-anchoring. The rev freezes the scored code: same rev = same
+# scores (Invariant 2). Verified to resolve all three crates from this one repo.
+feral = { git = "https://github.com/jkitchin/feral.git", rev = "5ab8074b3c87c96d223e56e8012c38b1cf591e0e" }
+feral-amd = { git = "https://github.com/jkitchin/feral.git", rev = "5ab8074b3c87c96d223e56e8012c38b1cf591e0e" }
+feral-ordering-core = { git = "https://github.com/jkitchin/feral.git", rev = "5ab8074b3c87c96d223e56e8012c38b1cf591e0e" }

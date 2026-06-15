@@ -60,6 +60,7 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 [[package]]
 name = "feral"
 version = "0.11.0"
+source = "git+https://github.com/jkitchin/feral.git?rev=5ab8074b3c87c96d223e56e8012c38b1cf591e0e#5ab8074b3c87c96d223e56e8012c38b1cf591e0e"
 dependencies = [
  "feral-amd",
  "feral-amf",
@@ -76,6 +77,7 @@ dependencies = [
 [[package]]
 name = "feral-amd"
 version = "0.2.1"
+source = "git+https://github.com/jkitchin/feral.git?rev=5ab8074b3c87c96d223e56e8012c38b1cf591e0e#5ab8074b3c87c96d223e56e8012c38b1cf591e0e"
 dependencies = [
  "feral-ordering-core",
 ]
@@ -83,6 +85,7 @@ dependencies = [
 [[package]]
 name = "feral-amf"
 version = "0.2.1"
+source = "git+https://github.com/jkitchin/feral.git?rev=5ab8074b3c87c96d223e56e8012c38b1cf591e0e#5ab8074b3c87c96d223e56e8012c38b1cf591e0e"
 dependencies = [
  "feral-ordering-core",
 ]
@@ -90,6 +93,7 @@ dependencies = [
 [[package]]
 name = "feral-kahip"
 version = "0.2.1"
+source = "git+https://github.com/jkitchin/feral.git?rev=5ab8074b3c87c96d223e56e8012c38b1cf591e0e#5ab8074b3c87c96d223e56e8012c38b1cf591e0e"
 dependencies = [
  "feral-amd",
  "feral-metis",
@@ -99,6 +103,7 @@ dependencies = [
 [[package]]
 name = "feral-metis"
 version = "0.2.1"
+source = "git+https://github.com/jkitchin/feral.git?rev=5ab8074b3c87c96d223e56e8012c38b1cf591e0e#5ab8074b3c87c96d223e56e8012c38b1cf591e0e"
 dependencies = [
  "feral-amd",
  "feral-ordering-core",
@@ -107,10 +112,12 @@ dependencies = [
 [[package]]
 name = "feral-ordering-core"
 version = "0.2.1"
+source = "git+https://github.com/jkitchin/feral.git?rev=5ab8074b3c87c96d223e56e8012c38b1cf591e0e#5ab8074b3c87c96d223e56e8012c38b1cf591e0e"
 
 [[package]]
 name = "feral-scotch"
 version = "0.2.1"
+source = "git+https://github.com/jkitchin/feral.git?rev=5ab8074b3c87c96d223e56e8012c38b1cf591e0e#5ab8074b3c87c96d223e56e8012c38b1cf591e0e"
 dependencies = [
  "feral-amd",
  "feral-metis",
