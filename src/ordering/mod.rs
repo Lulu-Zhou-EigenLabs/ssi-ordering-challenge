@@ -76,6 +76,17 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
         consider(order_nd(&adj, n), &mut best_perm, &mut best_flops);
     }
 
+    // Exact minimum-fill (min-deficiency) ordering for small matrices (iter 12).
+    // At each step it eliminates the node introducing the fewest NEW edges,
+    // computed exactly on the explicit elimination graph. Higher quality than
+    // min-degree but O(n · deg²) per pivot, so only affordable at small n; the
+    // small poisson grids (k≤30) are exactly where AMD's approximate degree
+    // leaves fill on the table (k16 stayed 1.008 under 400 restarts). Selection
+    // keeps it only when it wins, so it cannot regress the banded 1.000 ties.
+    if n <= MINFILL_MAX_N {
+        consider(order_min_fill(&adj, n), &mut best_perm, &mut best_flops);
+    }
+
     // Random-restart AMD (iter 11). Relabeling the elimination order perturbs
     // every degree-tie decision (bucket insertion + adjacency-scan order both
     // follow `alive` order), so each seeded shuffle explores a different
@@ -99,6 +110,95 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
     best_perm
 }
 
+/// Largest matrix for which the exact min-fill candidate runs. O(n·deg²) per
+/// pivot, so kept small; the poisson grids that lose under AMD are all here.
+const MINFILL_MAX_N: usize = 3000;
+
+/// Exact minimum-deficiency ("min-fill") ordering on the explicit elimination
+/// graph. At each step pick the live node whose elimination adds the fewest new
+/// fill edges (its neighbors' missing pairwise edges), eliminate it (clique its
+/// neighborhood), and repeat. Deterministic: ties break to the smallest index.
+///
+/// This is the classic min-fill heuristic (Tinney–Walker scheme 2 / Rose 1972),
+/// run exactly because n is small. It often beats approximate-degree AMD on
+/// small structured grids where a single bad pivot costs a whole dense block.
+fn order_min_fill(adj: &[Vec<usize>], n: usize) -> Vec<usize> {
+    // Adjacency as sorted bitset-free sets; mutate as we add fill edges.
+    let mut g: Vec<Vec<usize>> = adj.to_vec();
+    for row in g.iter_mut() {
+        row.sort_unstable();
+        row.dedup();
+    }
+    let mut alive = vec![true; n];
+    let mut perm = Vec::with_capacity(n);
+
+    for step in 0..n {
+        // Choose the live node of minimum deficiency (fill added on elimination),
+        // tie-broken by minimum current degree, then smallest index.
+        let mut best_v = usize::MAX;
+        let mut best_fill = usize::MAX;
+        let mut best_deg = usize::MAX;
+        for v in 0..n {
+            if !alive[v] {
+                continue;
+            }
+            let nbrs = &g[v];
+            let d = nbrs.len();
+            if best_fill == 0 && d >= best_deg {
+                // can't beat an existing zero-fill, lower-or-equal-degree pick
+                continue;
+            }
+            // Count missing edges among neighbor pairs; early-out once it
+            // exceeds the best deficiency found so far.
+            let mut fill = 0usize;
+            'outer: for (i, &u) in nbrs.iter().enumerate() {
+                let gu = &g[u];
+                for &wv in &nbrs[i + 1..] {
+                    if gu.binary_search(&wv).is_err() {
+                        fill += 1;
+                        if fill > best_fill {
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+            if fill < best_fill || (fill == best_fill && d < best_deg) {
+                best_fill = fill;
+                best_deg = d;
+                best_v = v;
+            }
+        }
+
+        let v = best_v;
+        alive[v] = false;
+        perm.push(v);
+        if step + 1 == n {
+            break;
+        }
+
+        // Eliminate v: make its live neighborhood a clique, then drop v.
+        let nbrs = std::mem::take(&mut g[v]);
+        let live_nbrs: Vec<usize> = nbrs.into_iter().filter(|&u| alive[u]).collect();
+        for &u in &live_nbrs {
+            // remove v from u's list
+            if let Ok(pos) = g[u].binary_search(&v) {
+                g[u].remove(pos);
+            }
+        }
+        for ai in 0..live_nbrs.len() {
+            let a = live_nbrs[ai];
+            for &b in &live_nbrs[ai + 1..] {
+                if let Err(pos) = g[a].binary_search(&b) {
+                    g[a].insert(pos, b);
+                    let pos2 = g[b].binary_search(&a).unwrap_err();
+                    g[b].insert(pos2, a);
+                }
+            }
+        }
+    }
+    perm
+}
+
 /// Number of seeded random restarts to attempt, scaled so each matrix stays
 /// well under the 5 s cap (cost ≈ restarts × O(nnz) for AMD + the predictor).
 /// Budget chosen empirically: the worst case (~160k) does a handful, the small
@@ -114,7 +214,7 @@ fn restart_count(n: usize) -> usize {
     // (they already win at the same ratio with one pass — iter 11); all the
     // headroom is on the small/mid grids, which stay at the full 64 restarts.
     let budget = 700_000usize;
-    (budget / n).min(64)
+    (budget / n).min(256)
 }
 
 /// Minimal SplitMix64 PRNG — deterministic, seedable, no dependencies. Used
