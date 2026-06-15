@@ -6,7 +6,7 @@ license = "MIT"
 description = "Fill-reducing ordering challenge for sparse symmetric indefinite factorization"
 
 [workspace]
-members = ["ssi-scoring", "prototype-oracle"]
+members = ["ssi-scoring", "ssi-purity", "prototype-oracle"]
 
 # THE HARNESS depends on the scoring wrapper (trusted code). It is the ONLY
 # scoring code path shared with the grader (Invariant 2). The submission

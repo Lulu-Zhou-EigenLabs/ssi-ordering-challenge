@@ -292,6 +292,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ssi-purity"
+version = "0.1.0"
+
+[[package]]
 name = "ssi-scoring"
 version = "0.1.0"
 dependencies = [
