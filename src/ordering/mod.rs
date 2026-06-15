@@ -47,35 +47,102 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
     let adj = build_adj(pattern);
     let all: Vec<usize> = (0..n).collect();
 
-    // Candidate orderings. Each is a complete, valid permutation; `order()`
-    // returns the one with the smallest EXACTLY-predicted Σc² (the same metric
-    // the harness scores), so adding a candidate can never raise the score.
-    let mut candidates: Vec<Vec<usize>> = Vec::with_capacity(3);
-    candidates.push(order_amd(&adj, &all, TieBreak::Lifo));
-    candidates.push(order_amd(&adj, &all, TieBreak::Fifo));
+    // Track the best ordering by EXACTLY-predicted Σc² (the same metric the
+    // harness scores), so trying more candidates can never raise the score.
+    // Ties keep the earlier candidate → deterministic (the twice-run gate).
+    let mut best_perm = order_amd(&adj, &all, TieBreak::Lifo);
+    let mut best_flops = predict_flops(&adj, &best_perm);
+    let mut consider = |perm: Vec<usize>, best_perm: &mut Vec<usize>, best_flops: &mut u64| {
+        let f = predict_flops(&adj, &perm);
+        if f < *best_flops {
+            *best_flops = f;
+            *best_perm = perm;
+        }
+    };
+
+    consider(order_amd(&adj, &all, TieBreak::Fifo), &mut best_perm, &mut best_flops);
 
     if ARROW_ENABLED {
         if let Some(hub) = detect_arrow(&adj, n) {
-            candidates.push(order_arrow(&adj, n, hub));
+            consider(order_arrow(&adj, n, hub), &mut best_perm, &mut best_flops);
         }
     }
 
+    // BFS-separator ND was offered as a candidate (iter 10) but NEVER won a
+    // single grid-like matrix under Σc² selection — its separators are worse
+    // than AMD's implicit ordering everywhere. Left off the hot path; only a
+    // genuinely better (multilevel) separator could earn a candidate slot.
     if ND_ENABLED && is_grid_like(&adj, n) {
-        candidates.push(order_nd(&adj, n));
+        consider(order_nd(&adj, n), &mut best_perm, &mut best_flops);
     }
 
-    // Pick the candidate with the lowest predicted flops (Σc²). Ties break to
-    // the earliest candidate index → deterministic (the twice-run gate).
-    let mut best = 0usize;
-    let mut best_flops = predict_flops(&adj, &candidates[0]);
-    for idx in 1..candidates.len() {
-        let f = predict_flops(&adj, &candidates[idx]);
-        if f < best_flops {
-            best_flops = f;
-            best = idx;
+    // Random-restart AMD (iter 11). Relabeling the elimination order perturbs
+    // every degree-tie decision (bucket insertion + adjacency-scan order both
+    // follow `alive` order), so each seeded shuffle explores a different
+    // elimination. The 5 s/matrix cap is almost entirely unused on this corpus
+    // (largest matrix ~80 ms for one pass), and the Σc² selector keeps a restart
+    // only when it actually beats LIFO/FIFO — pure upside, fully deterministic.
+    let restarts = restart_count(n);
+    if restarts > 0 {
+        let mut rng = SplitMix64::new(0x5EED_C0DE_u64 ^ (n as u64).wrapping_mul(0x9E3779B97F4A7C15));
+        let mut shuffled = all.clone();
+        for _ in 0..restarts {
+            fisher_yates(&mut shuffled, &mut rng);
+            consider(
+                order_amd(&adj, &shuffled, TieBreak::Lifo),
+                &mut best_perm,
+                &mut best_flops,
+            );
         }
     }
-    candidates.swap_remove(best)
+
+    best_perm
+}
+
+/// Number of seeded random restarts to attempt, scaled so each matrix stays
+/// well under the 5 s cap (cost ≈ restarts × O(nnz) for AMD + the predictor).
+/// Budget chosen empirically: the worst case (~160k) does a handful, the small
+/// poisson grids where the real headroom lives get many.
+fn restart_count(n: usize) -> usize {
+    if n < 2 {
+        return 0;
+    }
+    // Each restart costs ≈ 2·O(nnz) (one AMD pass + one Σc² predictor pass).
+    // Budget the TOTAL restart work to keep even n≈160k well under the cap
+    // (~1 s worst case, leaving generous margin for slower grader hardware and
+    // the determinism re-run). Restarts give the large poisson grids nothing
+    // (they already win at the same ratio with one pass — iter 11); all the
+    // headroom is on the small/mid grids, which stay at the full 64 restarts.
+    let budget = 700_000usize;
+    (budget / n).min(64)
+}
+
+/// Minimal SplitMix64 PRNG — deterministic, seedable, no dependencies. Used
+/// only to diversify restart elimination orders; never affects correctness.
+struct SplitMix64 {
+    state: u64,
+}
+
+impl SplitMix64 {
+    fn new(seed: u64) -> Self {
+        SplitMix64 { state: seed }
+    }
+    fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
+    }
+}
+
+/// Deterministic in-place Fisher–Yates shuffle.
+fn fisher_yates(a: &mut [usize], rng: &mut SplitMix64) {
+    let len = a.len();
+    for i in (1..len).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        a.swap(i, j);
+    }
 }
 
 fn build_adj(pattern: &Pattern) -> Vec<Vec<usize>> {
