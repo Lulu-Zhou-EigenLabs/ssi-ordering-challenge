@@ -5,3 +5,20 @@
 # synthetic-corpus / exact-MD-baseline history (which has been retired).
 1781406087	OK	15.908050	3.773953	starter: natural ordering (shipped) on real dev corpus
 1781410619	OK	15.908050	3.773953	phase 3 final: feral-backed scoring, natural-order starter, full dev corpus
+1781493657	FAIL	NaN	NaN	iter1: port ND+AMD hybrid (memory demo) vs feral-AMD baseline
+1781493947	OK	1.075733	1.032791	iter1: ND + quotient-graph AMD fallback vs feral-AMD
+1781494553	OK	1.053154	1.027099	iter2: QG-AMD + supervariable detection (mass elimination)
+1781494663	OK	0.991211	0.997400	iter3 diag: AMD-only (ND disabled) to attribute poisson loss
+1781494719	OK	0.991211	0.997400	iter3: supervariable AMD as default (ND disabled), arrow deferral kept
+1781494863	FAIL	NaN	NaN	iter4: AMD tie-break by fewest adjacent elements (window 8)
+1781494920	OK	1.016164	1.008005	iter4: AMD tie-break by fewest adjacent elements (window 8)
+1781494944	OK	1.011896	1.006869	iter4b: AMD tie-break smallest index among min-degree (window 8)
+1781494968	OK	0.991211	0.997400	iter4c: revert to LIFO tie-break (confirm 0.9912)
+1781495062	OK	0.991517	0.997501	iter5: exact AMD approx-degree (min of bound2 and bound3)
+1781495151	OK	1.013630	1.007383	iter6: tie-break prefer heaviest supervariable (nv), window 8
+1781495200	OK	0.991211	0.997400	iter6b: confirm revert to LIFO 0.9912
+1781495263	OK	1.000194	1.001147	iter7: exact min-deg+min-fill for small subgraphs (ns<=2500)
+1781495298	OK	0.991211	0.997400	iter7b: revert exact-minfill dispatch, back to 0.9912
+1781495334	OK	0.991211	0.997400	iter8: disable arrow special-case (let AMD handle hubs)
+1781495363	OK	0.991211	0.997400	FINAL: supervariable AMD, arrow safeguard on, ND off — score 0.9912
+1781495416	OK	0.991211	0.997400	FINAL clean: supervariable AMD (ND off, arrow safeguard on) — 0.9912
