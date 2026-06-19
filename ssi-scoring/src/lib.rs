@@ -152,6 +152,18 @@ mod tests {
     }
 
     #[test]
+    fn star_5_hub_first_flops_55() {
+        // 5×5 star: hub node 0 joined to leaves 1,2,3,4 (leaves otherwise
+        // disconnected). Eliminating the hub FIRST fills the four leaves into a
+        // clique → fully dense factor. Column counts 5, 4, 3, 2, 1 → nnz(L)=15
+        // (= n(n+1)/2), flops=25+16+9+4+1=55.
+        let p = Pattern::from_edges(5, &[(0, 1), (0, 2), (0, 3), (0, 4)]);
+        let s = score(&p, &identity(5));
+        assert_eq!(s.nnz_l, 15);
+        assert_eq!(s.flops, 55);
+    }
+
+    #[test]
     fn tridiagonal_zero_fill() {
         // tridiagonal n → nnz(L) = 2n − 1 (zero fill).
         let n = 100;
