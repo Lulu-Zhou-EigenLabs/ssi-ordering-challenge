@@ -44,7 +44,7 @@ expensive. The entire search space is safe to explore.
 
 You are given a Rust harness that, for each matrix in a development corpus
 (real KKT / saddle-point patterns harvested from interior-point solves —
-`corpus/dev/`, 216 matrices, n from 38 to ~160,000), does the following:
+`corpus/dev/patterns.jsonl`), does the following:
 
 0. **Gates** your submission with a local **purity & license check** (a subset
    of the production grader's Stage A): `src/ordering/` must be stdlib-only,
@@ -100,26 +100,36 @@ There are no loopholes: the input is the pattern only (no values, no
 right-hand side, no answer to peek at), and the score is a pure function of
 your output, computed by code you cannot touch.
 
+### The corpus: in-repo sample vs. full download
+
+`corpus/dev/patterns.jsonl` in this repo is a **small sample** (13 matrices,
+spanning the four families NLP / QCP / QP / QCQP plus one mid-size sparse
+case). Its job is to let you run the harness end to end immediately after
+cloning — it is **not** a representative tuning set, and scores on it are not
+competitive reference numbers (the sample is dominated by tiny near-clique
+matrices where ordering barely matters).
+
+The **full development corpus** (~279 patterns, n up to ~340,000) is published
+for download separately; fetch it and replace `corpus/dev/patterns.jsonl` to
+tune against the full distribution. See `corpus/dev/README.md`. The hidden
+evaluation corpus the grader ranks on is never published.
+
 ### Reference numbers
 
-Measured by this harness, on the shipped 216-matrix dev corpus:
-
-| ordering                                       | score (geomean flop ratio vs AMD) |
-|------------------------------------------------|-----------------------------------|
-| natural / identity (the shipped starter)       | **15.91**                         |
-| **feral AMD (baseline)**                        | **1.00**                          |
-| nested dissection (METIS-class), expected       | ≈ 0.5–0.9 on the larger/grid-like patterns — unclaimed |
-
-The starter loses badly (15.91×) because the natural order eliminates dense
-KKT constraint rows early and densifies the factor. Beating AMD (score < 1.00)
-is the game; nested dissection is the classic lead on the larger patterns.
+Beating AMD (**score < 1.00**) is the game; the AMD baseline is anchored at
+**1.00** by definition. On the **full** dev corpus the natural/identity starter
+loses by *orders of magnitude* — it eliminates dense KKT constraint rows early
+and densifies the factor — and nested dissection (METIS-class) is the classic
+lead on the larger, grid-like patterns. On the tiny in-repo sample the spread
+is compressed (identity ≈ 1.15× AMD), which is exactly why the sample is for
+pipeline smoke-testing, not for ranking your idea — measure on the full corpus.
 
 > Note on the demo in `memory/`: `memory/demo_nd_amd_hybrid.rs.txt` is a
-> nested-dissection + minimum-degree ordering that beat the *previous*
-> synthetic corpus, but its exact minimum-degree inner loop is O(n²) per pivot
-> and **exceeds the 5 s cap on the largest real matrices** (n ≈ 160k). It is a
-> source of ideas, not a drop-in — a production ordering needs a
-> quotient-graph (AMD-style) inner loop to stay within budget at scale.
+> nested-dissection + minimum-degree ordering, but its exact minimum-degree
+> inner loop is O(n²) per pivot and **exceeds the 5 s cap on the largest real
+> matrices** (the full corpus reaches n ≈ 340k). It is a source of ideas, not a
+> drop-in — a production ordering needs a quotient-graph (AMD-style) inner loop
+> to stay within budget at scale.
 
 ## How to play
 
@@ -132,8 +142,9 @@ writes `score.json`, and appends one row to `results.tsv` with timestamp,
 status, score, fill ratio, and your note.
 
 `cargo test --release` runs the harness's self-checks (closed-form scorer
-tests, the scorer cross-check against an independent oracle, loader agreement,
-exact-equivalence pins) — useful for verifying your toolchain before iterating.
+tests, the scorer cross-check against an independent oracle, the narrow-input
+property, and the exact-equivalence pins on the committed sample) — useful for
+verifying your toolchain before iterating.
 
 ### Building from a fresh clone
 

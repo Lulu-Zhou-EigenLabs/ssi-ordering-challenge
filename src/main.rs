@@ -6,8 +6,8 @@
 //!      src/ordering/ — a stdlib-only, license-clean submission passes; any
 //!      foreign-code escape or extra dependency FAILs the run before scoring;
 //!
-//! then, per matrix in the development corpus (the real dev matrices under
-//! corpus/dev/, loaded with feral's reference reader):
+//! then, per matrix in the development corpus (the real dev patterns in
+//! corpus/dev/patterns.jsonl, loaded with the shared ssi-scoring JSONL reader):
 //!
 //!   1. run the AMD baseline (feral_amd::amd_order) and score it through the
 //!      trusted scoring wrapper;
@@ -47,9 +47,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ssi_scoring::{score, Pattern};
 
-/// Per-matrix time cap. The dev corpus reaches n ≈ 160k; AMD + symbolic scoring
-/// of the largest matrices is well under a second (Phase 2 §4, cost doc §1),
-/// so a cap of 5 s leaves ample room for annealing/learned orderings while
+/// Per-matrix time cap. The full dev corpus reaches n ≈ 340k; AMD + symbolic
+/// scoring of the largest matrices is well under a second (Phase 2 §4, cost doc
+/// §1), so a cap of 5 s leaves ample room for annealing/learned orderings while
 /// killing runaways. (COMPETITION-VERIFIER-COST §1 recommends 2–5 s.)
 const TIME_CAP_PER_MATRIX: Duration = Duration::from_secs(5);
 

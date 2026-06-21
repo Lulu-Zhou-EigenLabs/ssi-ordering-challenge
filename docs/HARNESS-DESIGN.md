@@ -36,7 +36,7 @@ ssi-ordering-challenge/            (THE PUBLIC REPO / contestant template)
 ├── deny.toml             shared license policy (cargo-deny)                  [frozen]
 ├── src/
 │   ├── main.rs           harness driver (gate, stages, caps, scoring, output)[frozen]
-│   ├── pattern.rs        Pattern re-export + public .mtx reader + corpus     [frozen]
+│   ├── pattern.rs        Pattern re-export + dev-corpus loader (JSONL)        [frozen]
 │   ├── purity.rs         local Stage-A purity & license gate                 [frozen]
 │   └── ordering/         ★ contestant code — the only editable directory
 │       ├── mod.rs        pub fn order(&Pattern) -> Vec<usize>  (starter stub)
@@ -45,9 +45,9 @@ ssi-ordering-challenge/            (THE PUBLIC REPO / contestant template)
 │   └── src/
 │       ├── lib.rs        score(), amd_baseline() via feral building blocks
 │       ├── pattern.rs    the Pattern type (structure only)
-│       └── loader.rs     load_pattern() via feral's reference .mtx reader
+│       └── loader.rs     pattern_from_jsonl_line() + load_pattern() (.mtx); shared by harness & grader
 ├── prototype-oracle/     dev-only INDEPENDENT scorer, for the cross-check test
-├── corpus/dev/           the shipped development corpus (216 .mtx files)
+├── corpus/dev/           the shipped development corpus (patterns.jsonl sample)
 ├── results.tsv           append-only run log (timestamp, status, score, note)
 ├── score.json            latest score, machine-readable
 └── docs/HARNESS-DESIGN.md
@@ -87,11 +87,16 @@ which is what makes grading cheap (cf. `COMPETITION-VERIFIER-COST.md`).
 
 ### The corpus
 
-`corpus/dev/` — 216 real KKT / saddle-point patterns harvested from
-interior-point solves (Phase 2), stratified across size buckets and families
-(`ampl`, `bratu`, `optctrl`, `poisson`, `rosenbrock`, `sparseqp`), n from 38 to
-~160,000. Files are MatrixMarket `coordinate real symmetric` with dummy values
-(the score uses pattern only; the loader ignores values). The grader scores a
+`corpus/dev/patterns.jsonl` — real KKT / saddle-point patterns harvested from
+interior-point solves, stratified across size buckets and the four problem
+families (NLP / QCP / QP / QCQP). Each line is one symmetric sparsity pattern in
+compressed-sparse-column form (`n`, `indptr`, `indices`, plus `hash`/`source`
+metadata) — structure only, no values anywhere (NARROW INPUT holds by
+construction). The stored pattern includes the diagonal; the shared reader
+`ssi_scoring::pattern_from_jsonl_line` drops it to produce the off-diagonal
+contract `Pattern`. **What ships in the repo is a small sample** (13 matrices)
+for pipeline smoke-testing; the full corpus (~279 patterns, n up to ~340k) is
+published for download (see `corpus/dev/README.md`). The grader scores a
 disjoint, hidden evaluation slice from the same distribution. The synthetic
 generators of the prototype (`arrow`, `grid2d`, `grid3d`, `kkt`) survive only
 as `cargo test` fixtures in the `prototype-oracle` crate.
@@ -152,11 +157,17 @@ server's gate.
   the independent `prototype-oracle` scorer agree exactly on `nnz(L)` and
   `flops` across grids, 3D grids, KKTs, and the arrow, under identity, reverse,
   and AMD orderings.
-- **Loader agreement** (`tests/loader_agreement.rs`): the public stdlib `.mtx`
-  reader and feral's reference reader produce byte-identical `Pattern`s on all
-  216 dev files — no second parser can silently disagree.
+- **One reader, no cross-check needed**: the harness and grader parse a corpus
+  line into a `Pattern` through the *same* `ssi_scoring::pattern_from_jsonl_line`,
+  so there is no second parser that could silently disagree — Invariant 2 holds
+  at the parsing boundary by construction, not by an agreement test. (The former
+  `tests/loader_agreement.rs`, which cross-checked two `.mtx` parsers, is
+  retired with the dual-reader design.)
 - **Exact equivalence** (`tests/exact_equivalence.rs`): pinned `(nnz_l, flops)`
-  for the identity ordering on three committed dev files, so any drift between
-  local and grader scoring breaks the build immediately.
+  for the identity ordering on three committed sample matrices (`st_e09`,
+  `ex8_5_2`, `gilbert`), so any drift between local and grader scoring breaks
+  the build immediately. `gilbert` is tridiagonal under natural order, so its
+  pin `nnz_l = 2n−1 = 2001` is a closed-form check the numbers are genuine.
 - **Narrow input** (`tests/narrow_input.rs`): different values, identical
-  pattern ⇒ identical score; the value column is never consulted.
+  pattern ⇒ identical score; the `.mtx` value column is never consulted (and the
+  JSONL corpus carries no values at all).
