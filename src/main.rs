@@ -37,6 +37,7 @@
 
 mod ordering;
 mod pattern;
+mod perm_io;
 mod purity;
 
 use std::fmt::Write as _;
