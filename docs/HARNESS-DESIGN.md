@@ -166,8 +166,9 @@ server's gate.
 - **Exact equivalence** (`tests/exact_equivalence.rs`): pinned `(nnz_l, flops)`
   for the identity ordering on three committed sample matrices (`st_e09`,
   `ex8_5_2`, `gilbert`), so any drift between local and grader scoring breaks
-  the build immediately. `gilbert` is tridiagonal under natural order, so its
-  pin `nnz_l = 2n−1 = 2001` is a closed-form check the numbers are genuine.
+  the build immediately. `gilbert` (n=1001) is a hub-last arrow/star under
+  natural order (leaf columns cost 2, the hub 1 — zero fill), so its pin
+  `nnz_l = 2·1000 + 1 = 2001` is a closed-form check the numbers are genuine.
 - **Narrow input** (`tests/narrow_input.rs`): different values, identical
   pattern ⇒ identical score; the `.mtx` value column is never consulted (and the
   JSONL corpus carries no values at all).

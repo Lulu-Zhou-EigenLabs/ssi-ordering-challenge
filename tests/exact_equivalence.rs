@@ -49,9 +49,12 @@ fn pinned_identity_scores_on_committed_dev_matrices() {
 }
 
 // Measured once on the committed JSONL sample. These are among the smallest
-// sample matrices so the test is fast and the numbers stable. `gilbert` is
-// tridiagonal under natural order (zero fill): nnz_l = 2n-1 = 2001, a
-// closed-form cross-check that the numbers are genuine, not transcribed.
+// sample matrices so the test is fast and the numbers stable. `gilbert` (n=1001)
+// is a hub-last arrow/star under natural order: each leaf column 0..999 couples
+// only to the hub (node 1000), the hub eliminated last. That is zero fill — leaf
+// columns cost c_j = 2, the hub c = 1 — so nnz_l = 2*1000 + 1 = 2001 and
+// flops = 4*1000 + 1 = 4001, a closed-form cross-check that the numbers are
+// genuine, not transcribed.
 const PINNED_0: (&str, u64, u64) = ("st_e09", 8, 18);
 const PINNED_1: (&str, u64, u64) = ("ex8_5_2", 36, 148);
 const PINNED_2: (&str, u64, u64) = ("gilbert", 2001, 4001);

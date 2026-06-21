@@ -166,6 +166,12 @@ pub fn load_corpus_jsonl(path: &Path) -> Result<Vec<(String, Pattern)>, LoadErro
 /// Load exactly the `line_index`-th (0-based, blank lines counted) pattern from
 /// a `patterns.jsonl`. Provided for a future grader worker that grades one
 /// matrix per process; the harness uses `load_corpus_jsonl` instead.
+///
+/// WARNING: this index space differs from `load_corpus_jsonl`, which SKIPS
+/// blank lines. If a corpus ever contains blank lines, the `k`-th entry from
+/// `load_corpus_jsonl` is NOT necessarily line `k` here. A grader pairing the
+/// two must enumerate indices the same way both consume them (the shipped
+/// corpus has no blank lines, so the spaces coincide today).
 pub fn load_pattern_jsonl_line(path: &Path, line_index: usize) -> Result<Pattern, LoadError> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| LoadError::Json(format!("{}: {e}", path.display())))?;
