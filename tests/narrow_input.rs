@@ -12,8 +12,6 @@
 //! structure but differing in every value load to byte-identical `Pattern`s and
 //! score identically.
 
-use std::path::Path;
-
 fn write_tmp(name: &str, body: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("ssi-narrow-input-test");
     std::fs::create_dir_all(&dir).unwrap();
@@ -45,41 +43,11 @@ fn values_do_not_affect_the_loaded_pattern_or_score() {
     assert_eq!(ssi_scoring::score(&pa, &id), ssi_scoring::score(&pb, &id));
 }
 
-#[test]
-fn loaded_dev_file_score_is_value_independent() {
-    // Load a real committed dev file, then a copy with every value replaced by a
-    // distinct sentinel; the scores must match.
-    let orig = Path::new("corpus/dev/ampl/ampl_tutorial_flow_density__iter0.mtx");
-    let text = std::fs::read_to_string(orig).unwrap();
-    // Rewrite every entry's value column to a wildly different number.
-    let mut out = String::new();
-    let mut past_size = false;
-    for line in text.lines() {
-        let t = line.trim();
-        if t.starts_with('%') {
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        }
-        if !past_size {
-            out.push_str(line);
-            out.push('\n');
-            past_size = true;
-            continue;
-        }
-        let mut it = t.split_whitespace();
-        let (r, c) = (it.next().unwrap(), it.next().unwrap());
-        out.push_str(&format!("{r} {c} 123456.789\n"));
-    }
-    let mangled = write_tmp("mangled.mtx", &out);
-
-    let p_orig = ssi_scoring::load_pattern(orig).unwrap();
-    let p_mangled = ssi_scoring::load_pattern(&mangled).unwrap();
-    assert_eq!(p_orig.col_ptr, p_mangled.col_ptr);
-    assert_eq!(p_orig.row_idx, p_mangled.row_idx);
-    let id: Vec<usize> = (0..p_orig.n).collect();
-    assert_eq!(
-        ssi_scoring::score(&p_orig, &id),
-        ssi_scoring::score(&p_mangled, &id)
-    );
-}
+// The former `loaded_dev_file_score_is_value_independent` test mangled the
+// value column of a committed `.mtx` dev file and asserted the score was
+// unchanged. The dev corpus is now `corpus/dev/patterns.jsonl`, which is
+// pattern-only BY CONSTRUCTION — it carries no values at all, so there is no
+// value column to mangle and NARROW INPUT holds structurally rather than by
+// demonstration. The value-independence of the `.mtx` `load_pattern` path (used
+// by the grader's corpus tooling) remains pinned by the hand-written test
+// above.

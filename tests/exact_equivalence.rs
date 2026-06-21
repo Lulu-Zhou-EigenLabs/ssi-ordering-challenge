@@ -15,34 +15,43 @@
 
 use std::path::Path;
 
-fn score_identity(rel: &str) -> ssi_scoring::Score {
-    let path = Path::new("corpus/dev").join(rel);
-    let pat = ssi_scoring::load_pattern(&path)
+/// Score the identity ordering on the corpus matrix whose `source` is `src`,
+/// loaded from the committed JSONL sample through the shared scoring-wrapper
+/// reader (the same path the harness and grader use — Invariant 2).
+fn score_identity(src: &str) -> ssi_scoring::Score {
+    let path = Path::new("corpus/dev/patterns.jsonl");
+    let corpus = ssi_scoring::load_corpus_jsonl(path)
         .unwrap_or_else(|e| panic!("load {}: {e}", path.display()));
+    let (_, pat) = corpus
+        .iter()
+        .find(|(s, _)| s == src)
+        .unwrap_or_else(|| panic!("source {src} not in {}", path.display()));
     let identity: Vec<usize> = (0..pat.n).collect();
-    ssi_scoring::score(&pat, &identity)
+    ssi_scoring::score(pat, &identity)
 }
 
 #[test]
 fn pinned_identity_scores_on_committed_dev_matrices() {
-    // Small, committed files. PINNED — do not "fix" by editing the numbers;
-    // a mismatch means the scoring path changed and local/grader equivalence
-    // is at risk.
+    // Small, committed sample matrices. PINNED — do not "fix" by editing the
+    // numbers; a mismatch means the scoring path changed and local/grader
+    // equivalence is at risk.
     let cases: &[(&str, u64, u64)] = &[
-        // (file, expected nnz_l, expected flops) under identity ordering.
+        // (source, expected nnz_l, expected flops) under identity ordering.
         PINNED_0,
         PINNED_1,
         PINNED_2,
     ];
-    for &(rel, nnz_l, flops) in cases {
-        let s = score_identity(rel);
-        assert_eq!(s.nnz_l, nnz_l, "nnz_l drift on {rel}: got {}", s.nnz_l);
-        assert_eq!(s.flops, flops, "flops drift on {rel}: got {}", s.flops);
+    for &(src, nnz_l, flops) in cases {
+        let s = score_identity(src);
+        assert_eq!(s.nnz_l, nnz_l, "nnz_l drift on {src}: got {}", s.nnz_l);
+        assert_eq!(s.flops, flops, "flops drift on {src}: got {}", s.flops);
     }
 }
 
-// Measured once on the committed corpus (see PHASE-3-FINDINGS.md). These three
-// are among the smallest dev files so the test is fast and the numbers stable.
-const PINNED_0: (&str, u64, u64) = ("ampl/ampl_tutorial_flow_density__iter0.mtx", 209, 1659);
-const PINNED_1: (&str, u64, u64) = ("poisson/poisson_k8__iter0.mtx", 1396, 16646);
-const PINNED_2: (&str, u64, u64) = ("optctrl/optctrl_t69__iter0.mtx", 486, 1178);
+// Measured once on the committed JSONL sample. These are among the smallest
+// sample matrices so the test is fast and the numbers stable. `gilbert` is
+// tridiagonal under natural order (zero fill): nnz_l = 2n-1 = 2001, a
+// closed-form cross-check that the numbers are genuine, not transcribed.
+const PINNED_0: (&str, u64, u64) = ("st_e09", 8, 18);
+const PINNED_1: (&str, u64, u64) = ("ex8_5_2", 36, 148);
+const PINNED_2: (&str, u64, u64) = ("gilbert", 2001, 4001);
