@@ -68,8 +68,8 @@ fn main() {
     let corpus = pattern::dev_corpus();
     if corpus.is_empty() {
         println!(
-            "RUN FAILED: no matrices found under {}. Run from the repo root.",
-            pattern::DEV_CORPUS_DIR
+            "RUN FAILED: no patterns found at {}. Run from the repo root.",
+            pattern::DEV_CORPUS_FILE
         );
         std::process::exit(1);
     }
