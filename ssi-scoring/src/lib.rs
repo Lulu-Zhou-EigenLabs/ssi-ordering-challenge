@@ -49,7 +49,9 @@ use feral::symbolic::{column_counts_gnp, total_factor_nnz};
 mod loader;
 mod pattern;
 
-pub use loader::{load_pattern, LoadError};
+pub use loader::{
+    load_corpus_jsonl, load_pattern, load_pattern_jsonl_line, pattern_from_jsonl_line, LoadError,
+};
 pub use pattern::Pattern;
 
 /// The symbolic factorization cost of an ordering, derived purely from the

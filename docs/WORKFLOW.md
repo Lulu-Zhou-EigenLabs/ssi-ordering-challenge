@@ -21,7 +21,7 @@ which runs `fn main()` in [`src/main.rs`](../src/main.rs:56).
 | | |
 |---|---|
 | **You edit** | `src/ordering/` — only this directory (the rest is frozen harness). |
-| **The harness reads** | every `.mtx` under `corpus/dev/` (216 files). |
+| **The harness reads** | every pattern in `corpus/dev/patterns.jsonl` (a small in-repo sample; full corpus downloads separately). |
 | **The harness writes** | `score.json` (latest score) and one appended row in `results.tsv`. |
 | **The score** | geomean over the corpus of `flops(yours) / flops(AMD)`, lower is better, AMD anchored at 1.00. Tiebreak: geomean of `nnz(L)(yours) / nnz(L)(AMD)`. |
 
@@ -29,27 +29,21 @@ which runs `fn main()` in [`src/main.rs`](../src/main.rs:56).
 
 ## 1. The data: what an input matrix is
 
-Each corpus file is a MatrixMarket coordinate file with the banner
-`%%MatrixMarket matrix coordinate real symmetric`. The format requires a value
-column, but **the score never uses values** — they are dummy `1`s, parsed past
-and discarded. By the time your code sees a matrix, it is a pure graph.
+The corpus is one file, `corpus/dev/patterns.jsonl`: one JSON object per line,
+each a symmetric sparsity pattern in compressed-sparse-column (CSC) form —
+`{"n", "nnz", "indptr", "indices", "hash", "source"}`. There are **no values
+anywhere** — the corpus is pattern-only by construction, so by the time your
+code sees a matrix it is a pure graph.
 
-Two readers parse `.mtx`, and a test proves they agree:
-
-- **Public harness reader** — `read_mtx_pattern` /
-  `parse_mtx_pattern` in [`src/pattern.rs`](../src/pattern.rs:32). Pure stdlib.
-  It reads the banner, the `rows cols nnz` size line, then `row col value`
-  triplets; converts 1-based → 0-based; **drops the diagonal**; symmetrizes
-  every off-diagonal entry into both columns
-  ([`src/pattern.rs:104`](../src/pattern.rs:104)).
-- **Trusted / grader reader** — `load_pattern` in
-  [`ssi-scoring/src/loader.rs`](../ssi-scoring/src/loader.rs:40), which reuses
-  feral's own `read_mtx → to_csc → symmetric_pattern` and then drops values and
-  the diagonal.
-
-[`tests/loader_agreement.rs`](../tests/loader_agreement.rs) asserts the two
-produce byte-identical `Pattern`s on all 216 dev files, so there is no second
-parser that can silently disagree.
+One reader parses a line into a `Pattern`:
+`ssi_scoring::pattern_from_jsonl_line`
+([`ssi-scoring/src/loader.rs`](../ssi-scoring/src/loader.rs)). The harness loads
+the whole sample with `load_corpus_jsonl`; the grader can load one line by index
+with `load_pattern_jsonl_line` — **both route through the same parse core**, so
+there is no second parser that could silently disagree (Invariant 2 at the
+parsing boundary). The stored pattern is the full symmetrized pattern and
+**includes the diagonal**; the reader drops `i == j` to produce the off-diagonal
+contract `Pattern`.
 
 The type your `order()` receives is `Pattern`
 ([`ssi-scoring/src/pattern.rs`](../ssi-scoring/src/pattern.rs:23)), re-exported
@@ -90,9 +84,10 @@ A violation here fails the run before a single matrix is scored.
 ### Load the corpus
 
 [`src/main.rs:68`](../src/main.rs:68) calls `pattern::dev_corpus()`
-([`src/pattern.rs:143`](../src/pattern.rs:143)), which walks `corpus/dev/`,
-sorts the files for a deterministic order, and loads each into a `Pattern`. An
-empty corpus aborts the run (run from the repo root).
+([`src/pattern.rs`](../src/pattern.rs)), which loads every pattern in
+`corpus/dev/patterns.jsonl` in file order via the shared
+`ssi_scoring::load_corpus_jsonl` reader. An empty or missing corpus aborts the
+run (run from the repo root).
 
 ### Per matrix (the loop at [`src/main.rs:87`](../src/main.rs:87))
 
@@ -225,17 +220,17 @@ edit src/ordering/      ──►   cargo run --release -- --note "hypothesis"
         write findings to src/ordering/memory/ ; commit when the score improves
 ```
 
-The per-matrix table lets you attribute wins/losses by family (`ampl`, `bratu`,
-`optctrl`, `poisson`, `rosenbrock`, `sparseqp`) and size bucket, then form a
-targeted hypothesis. `results.tsv` is the append-only history of every run; the
-best committed score to date is recorded there and in `src/ordering/memory/`.
+The per-matrix table lets you attribute wins/losses by family (`NLP`, `QCP`,
+`QP`, `QCQP`) and size bucket, then form a targeted hypothesis. `results.tsv` is
+the append-only history of every run; the best committed score to date is
+recorded there and in `src/ordering/memory/`.
 
 ---
 
 ## 6. How this maps to the production grader
 
 The grader (`grader/`, private, never published) repeats Stages A–E against a
-**hidden** eval corpus that is disjoint from `corpus/dev/` and regenerated per
+**hidden** eval corpus that is disjoint from the dev corpus and regenerated per
 round. It extracts **only** `src/ordering/` from a submission, drops it into its
 own trusted copy of the harness, and scores inside a sandbox (no network, no
 filesystem, 2–4 GB memory cap, determinism re-runs).
