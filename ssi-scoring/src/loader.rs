@@ -146,6 +146,37 @@ fn parse_int_array(line: &str, key: &str) -> Option<Vec<usize>> {
     body.split(',').map(|t| t.trim().parse::<usize>().ok()).collect()
 }
 
+/// Load an entire `patterns.jsonl` corpus into `(source, Pattern)` pairs, in
+/// file order. Blank lines are skipped. Used by the local harness.
+pub fn load_corpus_jsonl(path: &Path) -> Result<Vec<(String, Pattern)>, LoadError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| LoadError::Json(format!("{}: {e}", path.display())))?;
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let (source, pat) = pattern_from_jsonl_line(line)
+            .map_err(|e| LoadError::Json(format!("{}:{}: {e}", path.display(), i)))?;
+        out.push((source, pat));
+    }
+    Ok(out)
+}
+
+/// Load exactly the `line_index`-th (0-based, blank lines counted) pattern from
+/// a `patterns.jsonl`. Provided for a future grader worker that grades one
+/// matrix per process; the harness uses `load_corpus_jsonl` instead.
+pub fn load_pattern_jsonl_line(path: &Path, line_index: usize) -> Result<Pattern, LoadError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| LoadError::Json(format!("{}: {e}", path.display())))?;
+    let line = text
+        .lines()
+        .nth(line_index)
+        .ok_or_else(|| LoadError::Json(format!("{}: no line {line_index}", path.display())))?;
+    let (_source, pat) = pattern_from_jsonl_line(line)?;
+    Ok(pat)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +226,31 @@ mod tests {
     fn jsonl_line_rejects_malformed() {
         assert!(pattern_from_jsonl_line("not json").is_err());
         assert!(pattern_from_jsonl_line(r#"{"n":2}"#).is_err());
+    }
+
+    #[test]
+    fn load_corpus_and_single_line_agree() {
+        let jsonl = "\
+{\"n\":2,\"nnz\":3,\"indptr\":[0,2,3],\"indices\":[0,1,1],\"hash\":\"a\",\"source\":\"m0\"}
+{\"n\":4,\"nnz\":12,\"indptr\":[0,3,6,8,12],\"indices\":[0,1,3,0,1,3,2,3,0,1,2,3],\"hash\":\"b\",\"source\":\"m1\"}
+";
+        let dir = std::env::temp_dir().join("ssi-scoring-jsonl-io-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("patterns.jsonl");
+        std::fs::write(&path, jsonl).unwrap();
+
+        let corpus = load_corpus_jsonl(&path).unwrap();
+        assert_eq!(corpus.len(), 2);
+        assert_eq!(corpus[0].0, "m0");
+        assert_eq!(corpus[1].0, "m1");
+        assert_eq!(corpus[1].1.n, 4);
+
+        // Single-line load of index 1 equals the whole-corpus entry 1.
+        let one = load_pattern_jsonl_line(&path, 1).unwrap();
+        assert_eq!(one.col_ptr, corpus[1].1.col_ptr);
+        assert_eq!(one.row_idx, corpus[1].1.row_idx);
+
+        // Out-of-range index is an error, not a panic.
+        assert!(load_pattern_jsonl_line(&path, 99).is_err());
     }
 }
