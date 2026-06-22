@@ -21,6 +21,38 @@ exceeded the cap badly on **dense** matrices — e.g. n=2343 / nnz=202664 took
 not dimension: the exact-min-fill path is gated only by `n ≤ 3000` and is
 O(n²·deg²) with fill-in blowup on dense graphs.
 
+### Root cause — why `order()` cost varies so much across matrices (TODO: fix later)
+
+The subprocess cap (this design) makes a runaway **fail fast** instead of
+blocking the run, but it does not make `order()` itself faster — a dense matrix
+still FAILs at the cap. The underlying issue is that `order()`'s expensive paths
+are **gated by `n` alone, yet their cost scales with `nnz` and per-node degree**,
+so they were tuned to the old sparse corpus and blow up on the new dense
+KKT corpus:
+
+- `order_min_fill` (`src/ordering/mod.rs`, `MINFILL_MAX_N = 3000`): gated by
+  `n ≤ 3000`, but its inner loop counts missing edges among each node's neighbor
+  **pairs** — **O(deg²) per pivot**, so ~O(n·deg²) total. Trivial at degree ≤ 6
+  (old grid/PDE patterns), ~10¹⁰ ops on a dense block with degree ~500 at the
+  same `n`.
+- Random-restart AMD (`restart_count = 700_000 / n`): the restart count and
+  per-restart cost (AMD pass + `predict_flops`, each **O(nnz)**) both assume
+  `nnz ≈ small·n`. On a dense matrix every restart is expensive **and** there are
+  many of them.
+
+**Why the old corpus was fine:** ampl / bratu / optctrl / poisson / rosenbrock
+are grid-like / banded PDE patterns with bounded low max-degree even at n≈160k,
+so the O(deg²) and O(nnz) terms stayed tiny and the n-only gates were
+*accidentally* sufficient. **The new corpus** (NLP / QCP / QP / QCQP) is
+KKT/saddle-point with dense constraint rows and hub nodes (high max-degree), so
+those paths explode on mid-`n`, high-density matrices that sail past the n-only
+gates.
+
+**Fix (deferred):** gate the expensive paths by `nnz`/max-degree, not just `n`
+(skip min-fill and scale restarts by density); or, for a reference starter, ship
+plain near-linear supervariable AMD (already ~0.99 vs AMD). This lives in the
+contestant-editable `src/ordering/`, so it is a tuning fix, not a contract change.
+
 ## Goal
 
 Make the harness **kill** an `order()` that exceeds the cap **promptly** (at the
