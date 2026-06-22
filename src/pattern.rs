@@ -56,15 +56,6 @@ pub fn dev_corpus_indexed() -> Vec<(usize, String, Pattern)> {
         .collect()
 }
 
-/// Load the shipped development corpus: every pattern in
-/// `corpus/dev/patterns.jsonl`, in file order, named by its `source` problem.
-pub fn dev_corpus() -> Vec<(String, Pattern)> {
-    dev_corpus_indexed()
-        .into_iter()
-        .map(|(_, source, pat)| (source, pat))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
