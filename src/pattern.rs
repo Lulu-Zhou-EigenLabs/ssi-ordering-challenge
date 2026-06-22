@@ -23,24 +23,64 @@ pub use ssi_scoring::Pattern;
 /// The shipped public development corpus: one JSONL file of CSC patterns.
 pub const DEV_CORPUS_FILE: &str = "corpus/dev/patterns.jsonl";
 
-/// Load the shipped development corpus: every pattern in
-/// `corpus/dev/patterns.jsonl`, in file order, named by its `source` problem.
-///
-/// Parsing goes through `ssi_scoring::load_corpus_jsonl`, the same shared
-/// reader the grader builds on (Invariant 2). A malformed corpus is a hard
-/// error — the harness must not silently score a partial corpus.
-pub fn dev_corpus() -> Vec<(String, Pattern)> {
+/// Load the dev corpus tagged with each entry's 0-based RAW line index in
+/// `patterns.jsonl` (blank lines counted), so the parent can hand the worker the
+/// exact index `ssi_scoring::load_pattern_jsonl_line` will resolve. Parsing
+/// still goes through the shared `ssi_scoring::load_corpus_jsonl` reader; this
+/// only recovers the raw indices of the non-blank lines it kept.
+pub fn dev_corpus_indexed() -> Vec<(usize, String, Pattern)> {
     let path = PathBuf::from(DEV_CORPUS_FILE);
-    match ssi_scoring::load_corpus_jsonl(&path) {
-        Ok(corpus) => corpus,
+    let corpus = match ssi_scoring::load_corpus_jsonl(&path) {
+        Ok(c) => c,
         Err(e) => {
-            // Empty vec triggers main.rs's "no matrices found" guard with a
-            // clear message; a parse error mid-file is a hard panic (corrupt
-            // corpus must never be scored silently).
             if path.exists() {
                 panic!("failed to load {}: {e}", path.display());
             }
-            Vec::new()
+            return Vec::new();
+        }
+    };
+    // Recover the raw line index of each non-blank line, in file order — the
+    // same lines load_corpus_jsonl parsed, in the same order.
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let raw_indices: Vec<usize> = text
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty())
+        .map(|(i, _)| i)
+        .collect();
+    debug_assert_eq!(raw_indices.len(), corpus.len(), "index/corpus length mismatch");
+    corpus
+        .into_iter()
+        .zip(raw_indices)
+        .map(|((source, pat), idx)| (idx, source, pat))
+        .collect()
+}
+
+/// Load the shipped development corpus: every pattern in
+/// `corpus/dev/patterns.jsonl`, in file order, named by its `source` problem.
+pub fn dev_corpus() -> Vec<(String, Pattern)> {
+    dev_corpus_indexed()
+        .into_iter()
+        .map(|(_, source, pat)| (source, pat))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indexed_corpus_matches_single_line_loader() {
+        // Each (raw_index, _, pattern) from dev_corpus_indexed must equal the
+        // pattern load_pattern_jsonl_line resolves for that raw index — proving
+        // the parent and worker agree on which matrix an index names.
+        let path = std::path::Path::new(DEV_CORPUS_FILE);
+        for (idx, _src, pat) in dev_corpus_indexed() {
+            let one = ssi_scoring::load_pattern_jsonl_line(path, idx)
+                .expect("worker loader resolves the raw index");
+            assert_eq!(one.n, pat.n, "n mismatch at raw line {idx}");
+            assert_eq!(one.col_ptr, pat.col_ptr, "col_ptr mismatch at raw line {idx}");
+            assert_eq!(one.row_idx, pat.row_idx, "row_idx mismatch at raw line {idx}");
         }
     }
 }
