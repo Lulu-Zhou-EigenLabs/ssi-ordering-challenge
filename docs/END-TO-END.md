@@ -170,7 +170,7 @@ claim *"the score is a correct, stable, value-independent function of
 | **Scorer cross-check** | `tests/scorer_crosscheck.rs` | The feral-backed scorer agrees **exactly** (nnz_l and flops) with an *independent* reimplementation (`prototype-oracle`) across arrows, 2D/3D grids, and KKT families, under identity, reverse, and AMD orderings. Two independent codes agreeing rules out a shared bug. |
 | **Exact equivalence (pins)** | `tests/exact_equivalence.rs` | Pinned `(nnz_l, flops)` for the identity ordering on three committed sample matrices (`st_e09`, `ex8_5_2`, `gilbert`), so *any* drift in the scoring path breaks the build immediately. `gilbert` (a hub-last arrow) has a closed-form pin (nnz_l = 2·1000+1 = 2001) proving the numbers are genuine, not transcribed. |
 | **Narrow input** | `tests/narrow_input.rs` | Two matrices with identical structure but different values load to byte-identical `Pattern`s and score identically — the value column is never consulted. (The JSONL corpus has no values at all; this pins the property for the `.mtx` `load_pattern` path the grader tooling still uses.) |
-| **Submission self-checks** | `src/ordering/mod.rs` (`mod tests`) | The contestant's private `predict_flops` matches the same closed-form facts, and `order()` returns a valid bijection — so the candidate selector scores candidates with the same metric the harness uses. |
+| **Submission self-checks** | `src/ordering/mod.rs` (`mod tests`) | The shipped starter `order()` returns a valid bijection of `0..n` and handles the empty pattern — the contract the harness enforces. (These are the stub's own tests; you extend them as you build a real ordering.) |
 
 There is **no loader-agreement test** anymore: with a single shared JSONL
 reader, the "two parsers might disagree" failure it guarded against cannot
@@ -192,11 +192,11 @@ edit src/ordering/   →   cargo run --release -- --note "hypothesis"
    write findings to src/ordering/memory/ ; commit when the score improves
 ```
 
-The submission today is a **generate-candidates-keep-the-best** strategy
-(supervariable AMD with LIFO/FIFO tie-breaks, arrow-hub deferral, exact
-min-fill for small n, seeded random-restart AMD), selecting whichever candidate
-has the lowest *predicted* Σc_j². Details and the `predict_flops`/official-score
-boundary are in [`WORKFLOW.md`](WORKFLOW.md) §4.
+What ships is a **starter stub**: `order()` returns the identity / natural
+order — valid and deterministic, but deliberately not a good ordering (it scores
+far worse than AMD on real KKT patterns). It is your starting line; replace it
+with a real fill-reducing ordering. See [`WORKFLOW.md`](WORKFLOW.md) §4 for the
+contract details and a suggested approach.
 
 ---
 

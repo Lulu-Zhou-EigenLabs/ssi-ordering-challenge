@@ -129,12 +129,12 @@ lead on the larger, grid-like patterns. On the tiny in-repo sample the spread
 is compressed (identity ≈ 1.15× AMD), which is exactly why the sample is for
 pipeline smoke-testing, not for ranking your idea — measure on the full corpus.
 
-> Note on the demo in `memory/`: `memory/demo_nd_amd_hybrid.rs.txt` is a
-> nested-dissection + minimum-degree ordering, but its exact minimum-degree
-> inner loop is O(n²) per pivot and **exceeds the 2 s cap on the largest real
-> matrices** (the full corpus reaches n ≈ 340k). It is a source of ideas, not a
-> drop-in — a production ordering needs a quotient-graph (AMD-style) inner loop
-> to stay within budget at scale.
+> A note on scale: a textbook nested-dissection + *exact* minimum-degree
+> ordering has an O(n²)-per-pivot inner loop that **exceeds the 2 s cap on the
+> largest real matrices** (the full corpus reaches n ≈ 340k) and on dense KKT
+> blocks even at modest `n`. A production ordering needs a quotient-graph
+> (AMD-style) near-linear inner loop, and must gate any expensive path by
+> **density (nnz / max-degree)**, not just `n`, to stay within budget at scale.
 
 ## How to play
 
@@ -166,12 +166,12 @@ is sourced.
 You may modify **anything inside `src/ordering/`** — split it into
 submodules, rewrite primitives, refactor freely.
 
-> **What ships in `src/ordering/` today.** The repo includes a *worked
-> reference* ordering (a multi-candidate supervariable-AMD implementation), not
-> an empty stub — so a fresh clone scores a real, non-trivial result out of the
-> box. It is a starting point to study and beat, not a fixed part of the
-> harness: replace it wholesale if you like. The only contract is the `order()`
-> signature; everything else under `src/ordering/` is yours.
+> **What ships in `src/ordering/` today.** A **starter stub**: `order()`
+> returns the identity / natural order. It is a valid, deterministic
+> permutation, so a fresh clone runs end to end — but it is *not* a good
+> ordering (on real KKT patterns it scores far worse than AMD). That is the
+> point: it is your starting line. Replace it wholesale; the only fixed thing is
+> the `order()` signature, and everything else under `src/ordering/` is yours.
 
 You may **not** touch the harness:
 

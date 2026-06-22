@@ -180,36 +180,27 @@ The frozen contract is one function
 pub fn order(pattern: &Pattern) -> Vec<usize>
 ```
 
-`perm[k]` = the original index eliminated `k`-th. The current implementation is
-a **generate-candidates-and-keep-the-best** strategy. It builds an adjacency
-list, then evaluates several candidate orderings and keeps whichever has the
-lowest *predicted* `Σc_j²`:
+`perm[k]` = the original index eliminated `k`-th. **What ships is a starter
+stub:** `order()` returns the identity / natural order, `(0..n).collect()`. It
+is a valid, deterministic permutation (so the harness runs end to end), but it
+is deliberately *not* a good ordering — on real KKT patterns the identity
+eliminates dense constraint rows early and densifies the factor, scoring far
+worse than the AMD baseline. It is the starting line, not a solution.
 
-- Supervariable quotient-graph **AMD** with LIFO and FIFO tie-breaks
-  (`order_amd`, [`src/ordering/mod.rs`](../src/ordering/mod.rs));
-- **Arrow-hub deferral** when a dominant hub is detected
-  ([`src/ordering/mod.rs`](../src/ordering/mod.rs));
-- Exact **min-fill** for small matrices, n ≤ 3000
-  ([`src/ordering/mod.rs`](../src/ordering/mod.rs));
-- **Seeded random-restart AMD**, budgeted to stay under the time cap
-  ([`src/ordering/mod.rs`](../src/ordering/mod.rs));
-- Nested dissection exists but is **disabled** — it never beat AMD on this
-  corpus ([`src/ordering/mod.rs`](../src/ordering/mod.rs)).
+Your job is to replace it. Anything under `src/ordering/` is yours: rewrite the
+file, split it into submodules, add helpers — as long as `order()` keeps its
+signature and stays a deterministic bijection within the 2 s cap. Cost scales
+with **density (nnz, max-degree)**, not just `n`, so gate any expensive path by
+both. The classic ordering families to study — minimum-degree / AMD, nested
+dissection, minimum-fill, local-search refinement — are in `README.md` →
+"Background reading"; record what you try in `src/ordering/memory/`.
 
-The key enabler is `predict_flops`
-([`src/ordering/mod.rs`](../src/ordering/mod.rs)): a pure-stdlib
-reimplementation of the harness's exact `Σc_j²` metric (Davis/CSparse
-elimination tree + column counts). Because the selector scores every candidate
-with the *same* metric the harness uses, adding candidates can only lower or tie
-the final score — never raise it. Selection ties keep the earlier candidate, so
-the result stays deterministic for the twice-run gate.
-
-> **Boundary:** `predict_flops` is the contestant's *private estimate* used only
-> to pick a candidate. The official score is always recomputed by
-> `ssi_scoring::score`. The two agree by construction (same algorithm), and the
-> cross-check tests in `ssi-scoring` keep them honest — but if you change
-> `predict_flops` you change only *which candidate is chosen*, never how it is
-> scored.
+> **Tip — a private cost estimate.** A useful pattern is to *predict* the score
+> of a candidate ordering yourself (the metric is `Σ c_j²` over the column
+> counts of L; see §3) so you can generate several candidates and keep the best.
+> That is purely your own logic — the official score is always recomputed by
+> `ssi_scoring::score` from the permutation you return, so any estimator you
+> build affects only *which* ordering you choose, never how it is scored.
 
 ---
 
@@ -228,8 +219,8 @@ edit src/ordering/      ──►   cargo run --release -- --note "hypothesis"
 
 The per-matrix table lets you attribute wins/losses by family (`NLP`, `QCP`,
 `QP`, `QCQP`) and size bucket, then form a targeted hypothesis. `results.tsv` is
-the append-only history of every run; the best committed score to date is
-recorded there and in `src/ordering/memory/`.
+the append-only history of every run, so your score progression over time is
+recorded there; keep the reasoning behind each step in `src/ordering/memory/`.
 
 ---
 
