@@ -139,7 +139,7 @@ partial credit):
 |---|---|---|
 | **A — purity & license** | scan `src/ordering/` for non-stdlib escapes (added deps, `build.rs`, FFI, `#[no_mangle]`/`#[link]`, proc-macros, `include!` escapes) | `src/purity.rs` → `ssi-purity` |
 | **load corpus** | read every line of `corpus/dev/patterns.jsonl` into `(name, Pattern)` | `pattern::dev_corpus()` (`src/pattern.rs`) |
-| **B — run order()** | call `order()` **twice**, timed against a 5 s/matrix cap; a panic or cap breach fails the run | `src/main.rs:93` |
+| **B — run order()** | call `order()` **twice**, timed against a 2 s/matrix cap; a panic or cap breach fails the run | `src/main.rs:93` |
 | **C — validate** | the returned permutation must be a true bijection of `0..n` | `validate_permutation` (`src/main.rs:172`) |
 | **E — determinism** | the two `order()` runs must return byte-identical permutations | `src/main.rs:117` |
 | **D — score** | `score(pattern, perm)` — the same function used for the baseline | `src/main.rs:127` |

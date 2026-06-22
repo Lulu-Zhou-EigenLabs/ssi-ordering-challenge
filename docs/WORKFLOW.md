@@ -101,7 +101,7 @@ For each `(name, pattern)`:
 2. **Stage B — run your `order()`, timed and twice**
    ([`src/main.rs:93`](../src/main.rs:93)):
    - First call is wrapped in `catch_unwind` — a **panic** fails the run.
-   - Elapsed time is checked against `TIME_CAP_PER_MATRIX = 5s`
+   - Elapsed time is checked against `TIME_CAP_PER_MATRIX = 2s`
      ([`src/main.rs:54`](../src/main.rs:54)) — a **cap violation** fails the run.
    - It is called a **second time**; if `perm1 != perm2` the run fails for
      **nondeterminism** (Stage E analog, [`src/main.rs:117`](../src/main.rs:117)).

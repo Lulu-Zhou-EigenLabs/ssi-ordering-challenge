@@ -3,7 +3,7 @@
 //! Fill-reducing ordering. Contract (frozen):
 //!   `pub fn order(pattern: &Pattern) -> Vec<usize>`
 //! Returns `perm[k]` = original index eliminated k-th; a bijection of `0..n`,
-//! deterministic, under the 5 s/matrix cap. stdlib only.
+//! deterministic, under the 2 s/matrix cap. stdlib only.
 //!
 //! Strategy (see memory/): nested dissection on grid-like structure (where it
 //! beats AMD asymptotically), arrow-hub deferral, and a quotient-graph
@@ -99,7 +99,7 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
     // Random-restart AMD (iter 11). Relabeling the elimination order perturbs
     // every degree-tie decision (bucket insertion + adjacency-scan order both
     // follow `alive` order), so each seeded shuffle explores a different
-    // elimination. The 5 s/matrix cap is almost entirely unused on this corpus
+    // elimination. The 2 s/matrix cap is almost entirely unused on this corpus
     // (largest matrix ~80 ms for one pass), and the Σc² selector keeps a restart
     // only when it actually beats LIFO/FIFO — pure upside, fully deterministic.
     let restarts = restart_count(n);
@@ -209,7 +209,7 @@ fn order_min_fill(adj: &[Vec<usize>], n: usize) -> Vec<usize> {
 }
 
 /// Number of seeded random restarts to attempt, scaled so each matrix stays
-/// well under the 5 s cap (cost ≈ restarts × O(nnz) for AMD + the predictor).
+/// well under the 2 s cap (cost ≈ restarts × O(nnz) for AMD + the predictor).
 /// Budget chosen empirically: the worst case (~160k) does a handful, the small
 /// poisson grids where the real headroom lives get many.
 fn restart_count(n: usize) -> usize {
