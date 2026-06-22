@@ -39,6 +39,7 @@ mod ordering;
 mod pattern;
 mod perm_io;
 mod purity;
+mod watchdog;
 
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
