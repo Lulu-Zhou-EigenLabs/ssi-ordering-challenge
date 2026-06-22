@@ -53,7 +53,7 @@ You are given a Rust harness that, for each matrix in a development corpus
 1. **Runs** feral's AMD baseline ordering and scores it.
 2. **Calls** your `ordering::order(&Pattern) -> Vec<usize>` — *twice*. Both
    runs must return identical permutations (determinism gate) within the
-   per-matrix time cap (5 s).
+   per-matrix time cap (2 s).
 3. **Validates** your permutation as a true bijection of `0..n` — wrong
    length, duplicates, or out-of-range indices fail the run, as does a panic.
 4. **Recomputes** the score from your permutation with feral's own symbolic
@@ -92,8 +92,13 @@ fails on any matrix:
 - **Purity/license.** `src/ordering/` must be stdlib-only and license-clean.
 - **Bijection.** The permutation must contain each of `0..n` exactly once.
 - **Determinism.** Two runs on the same pattern must agree exactly.
-- **Time cap.** 5 s per matrix (annealing and learned orderings are welcome;
-  runaways are not).
+- **Time cap.** 2 s per matrix, **enforced**: `order()` runs in a child process
+  that is killed the instant it exceeds the cap, and the run FAILs with the
+  offending matrix's size/density. (This is the strict end of the proposal's
+  2–5 s band and is stricter than the server's current default, so an ordering
+  that passes locally passes the server gate.) Annealing and learned orderings
+  are welcome; runaways are not — and note that cost scales with **density
+  (nnz)**, not just dimension.
 - **No panics.**
 
 There are no loopholes: the input is the pattern only (no values, no
@@ -126,7 +131,7 @@ pipeline smoke-testing, not for ranking your idea — measure on the full corpus
 
 > Note on the demo in `memory/`: `memory/demo_nd_amd_hybrid.rs.txt` is a
 > nested-dissection + minimum-degree ordering, but its exact minimum-degree
-> inner loop is O(n²) per pivot and **exceeds the 5 s cap on the largest real
+> inner loop is O(n²) per pivot and **exceeds the 2 s cap on the largest real
 > matrices** (the full corpus reaches n ≈ 340k). It is a source of ideas, not a
 > drop-in — a production ordering needs a quotient-graph (AMD-style) inner loop
 > to stay within budget at scale.

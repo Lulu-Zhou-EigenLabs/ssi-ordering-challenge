@@ -37,7 +37,9 @@
 
 mod ordering;
 mod pattern;
+mod perm_io;
 mod purity;
+mod watchdog;
 
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
@@ -47,13 +49,20 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ssi_scoring::{score, Pattern};
 
-/// Per-matrix time cap. The full dev corpus reaches n ≈ 340k; AMD + symbolic
-/// scoring of the largest matrices is well under a second (Phase 2 §4, cost doc
-/// §1), so a cap of 5 s leaves ample room for annealing/learned orderings while
-/// killing runaways. (COMPETITION-VERIFIER-COST §1 recommends 2–5 s.)
-const TIME_CAP_PER_MATRIX: Duration = Duration::from_secs(5);
+/// Per-matrix time cap, ENFORCED: order() runs in a child process that is
+/// SIGKILLed at this bound (see watchdog). 2 s is the strict end of the cost
+/// doc's 2–5 s band; it is stricter than the grader's current 5 s default, so a
+/// submission that passes locally passes the server gate.
+const TIME_CAP_PER_MATRIX: Duration = Duration::from_secs(2);
 
 fn main() {
+    // Worker mode: the ONLY process that runs contestant order(). Loads one
+    // pattern by raw line index, runs order(), writes the permutation, exits.
+    let raw_args: Vec<String> = std::env::args().collect();
+    if raw_args.get(1).map(String::as_str) == Some("--worker") {
+        std::process::exit(worker(&raw_args[2..]));
+    }
+
     let note = parse_note();
 
     // --- Stage A analog: purity & license gate, before any scoring. ---
@@ -65,7 +74,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    let corpus = pattern::dev_corpus();
+    let corpus = pattern::dev_corpus_indexed();
     if corpus.is_empty() {
         println!(
             "RUN FAILED: no patterns found at {}. Run from the repo root.",
@@ -84,35 +93,49 @@ fn main() {
     let mut failed: Option<String> = None;
     let mut table = String::new();
 
-    for (name, pat) in &corpus {
-        // --- AMD baseline ---
+    // Resolve our own executable + a scratch dir for worker perm files.
+    let exe = std::env::current_exe().expect("locate harness executable");
+    let scratch = std::env::temp_dir().join(format!("ssi-harness-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("create scratch dir");
+    let jsonl_path = pattern::DEV_CORPUS_FILE.to_string();
+    let cap = watchdog::CapConfig { time_cap: TIME_CAP_PER_MATRIX, poll: std::time::Duration::from_millis(10) };
+
+    for (line_index, name, pat) in &corpus {
+        // --- AMD baseline (trusted, in-process) ---
         let base_perm = ssi_scoring::amd_baseline(pat);
         let base = score(pat, &base_perm);
 
-        // --- contestant ordering: timed, run twice, validated ---
-        let t0 = Instant::now();
-        let perm1 = match std::panic::catch_unwind(|| ordering::order(pat)) {
-            Ok(p) => p,
-            Err(_) => {
-                failed = Some(format!("{name}: ordering panicked"));
-                break;
+        // --- contestant ordering: capped subprocess, run twice ---
+        let run_once = |tag: &str| -> Result<Vec<usize>, String> {
+            let out_perm = scratch.join(format!("{line_index}-{tag}.bin"));
+            let _ = std::fs::remove_file(&out_perm);
+            let mut cmd = std::process::Command::new(&exe);
+            cmd.arg("--worker").arg(&jsonl_path).arg(line_index.to_string()).arg(&out_perm);
+            let t0 = Instant::now();
+            match watchdog::run_capped(&mut cmd, &cap) {
+                watchdog::WorkerOutcome::Ok => perm_io::read_perm(&out_perm)
+                    .map_err(|e| format!("worker produced no readable permutation: {e}")),
+                watchdog::WorkerOutcome::Timeout => Err(format!(
+                    "order() exceeded the {:.1}s per-matrix cap and was killed (took ≥ {:.1}s). \
+                     Your ordering must return within {:.0}s on every matrix. This matrix is \
+                     n={}, nnz={}, nnz/n≈{} — if it is dense, the cost is in order() itself; \
+                     gate expensive paths by BOTH n and nnz.",
+                    TIME_CAP_PER_MATRIX.as_secs_f64(),
+                    t0.elapsed().as_secs_f64(),
+                    TIME_CAP_PER_MATRIX.as_secs_f64(),
+                    pat.n, pat.nnz(), pat.nnz() / pat.n.max(1)
+                )),
+                watchdog::WorkerOutcome::Crashed(why) => Err(format!("order() crashed: {why}")),
             }
         };
-        let elapsed = t0.elapsed();
-        if elapsed > TIME_CAP_PER_MATRIX {
-            failed = Some(format!(
-                "{name}: ordering took {:.2}s, cap is {:.0}s",
-                elapsed.as_secs_f64(),
-                TIME_CAP_PER_MATRIX.as_secs_f64()
-            ));
-            break;
-        }
-        let perm2 = match std::panic::catch_unwind(|| ordering::order(pat)) {
+
+        let perm1 = match run_once("a") {
             Ok(p) => p,
-            Err(_) => {
-                failed = Some(format!("{name}: ordering panicked on re-run"));
-                break;
-            }
+            Err(e) => { failed = Some(format!("{name}: {e}")); break; }
+        };
+        let perm2 = match run_once("b") {
+            Ok(p) => p,
+            Err(e) => { failed = Some(format!("{name}: {e}")); break; }
         };
         if perm1 != perm2 {
             failed = Some(format!("{name}: nondeterministic ordering (two runs differ)"));
@@ -131,18 +154,20 @@ fn main() {
         log_fill_sum += fill_ratio.ln();
 
         let line = format!(
-            "{:<28} {:>8} {:>10} {:>14} {:>14} {:>8.3} {:>7.0}ms",
+            "{:<28} {:>8} {:>10} {:>14} {:>14} {:>8.3} {:>9}",
             name,
             pat.n,
             pat.nnz(),
             base.flops,
             yours.flops,
             ratio,
-            elapsed.as_secs_f64() * 1e3
+            "(capped)"
         );
         println!("{line}");
         let _ = writeln!(table, "{line}");
     }
+
+    let _ = std::fs::remove_dir_all(&scratch);
 
     let timestamp = now();
 
@@ -164,6 +189,36 @@ fn main() {
             );
             std::fs::write("score.json", json).expect("write score.json");
             append_results(timestamp, "OK", score_val, fill, &note);
+        }
+    }
+}
+
+/// `--worker <jsonl_path> <line_index> <out_perm>`: load one pattern, run the
+/// contestant order(), write the permutation. The parent supervises this under
+/// the time cap and SIGKILLs it on breach. A panic aborts the process (non-zero
+/// exit, no perm file) — the parent treats that as a FAIL.
+fn worker(args: &[String]) -> i32 {
+    let (Some(jsonl), Some(idx_s), Some(out)) = (args.first(), args.get(1), args.get(2)) else {
+        eprintln!("--worker: usage: --worker <jsonl_path> <line_index> <out_perm>");
+        return 2;
+    };
+    let Ok(line_index) = idx_s.parse::<usize>() else {
+        eprintln!("--worker: line_index must be a non-negative integer");
+        return 2;
+    };
+    let pat = match ssi_scoring::load_pattern_jsonl_line(Path::new(jsonl), line_index) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("worker: failed to load pattern {line_index} from {jsonl}: {e}");
+            return 3;
+        }
+    };
+    let perm = ordering::order(&pat);
+    match perm_io::write_perm(Path::new(out), &perm) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("worker: failed to write perm to {out}: {e}");
+            4
         }
     }
 }

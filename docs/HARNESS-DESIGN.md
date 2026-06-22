@@ -58,7 +58,7 @@ Per run, `main.rs` executes the grader stages of the proposal in miniature:
 | Proposal stage | Harness implementation |
 |---|---|
 | A — purity & license gate | `purity::check`: scans `src/ordering/` for build.rs / FFI / `#[no_mangle]` / `#[link]` / proc-macros / `include!` escapes / added dependencies, and runs `cargo-deny` against `deny.toml` (fallback to a dependency scan if cargo-deny is absent). Mirrors the grader's authoritative Stage A — same rules, same `deny.toml`. |
-| B — sandboxed compile & run | plain `cargo run` here, with the 5 s/matrix **time cap** enforced in-process; the production grader adds a no-network/no-filesystem sandbox and a 2–4 GB memory cap |
+| B — sandboxed compile & run | `cargo run` here runs each `order()` in a child process (`--worker` mode) supervised by a watchdog (`src/watchdog.rs`) that SIGKILLs it at the **2 s/matrix time cap** — the same enforcement mechanism the grader uses; the production grader additionally adds a no-network/no-filesystem sandbox and a 2–4 GB memory cap |
 | C — output validation | `validate_permutation`: exact bijection check; panics caught via `catch_unwind` |
 | D — trusted scoring | `ssi_scoring::score`: feral's pattern-pure building blocks — `symmetric_pattern → permute_pattern → EliminationTree::from_pattern → column_counts_gnp`, then `nnz(L) = Σ cⱼ` and `flops = Σ cⱼ²`, computed from the permutation alone |
 | E — reproducibility | the ordering is run twice per matrix; outputs must be identical |
@@ -123,7 +123,7 @@ targeted hypotheses. Failure messages name the offending matrix and reason
 | report a fake score | impossible — contestant returns a permutation; feral's scorer derives the score |
 | return a malformed/partial permutation | Stage C bijection check fails the run |
 | nondeterministic ordering that "gets lucky" | Stage E double-run equality check |
-| stall/explore unboundedly | 5 s/matrix cap, enforced in-process |
+| stall/explore unboundedly | 2 s/matrix cap, enforced via SIGKILL in a child process |
 | read the answer / RHS | doesn't exist: `Pattern` carries structure only; loader drops values |
 | hardcode permutations for the corpus | works locally by design (it's the *dev* corpus); defeated in production by the hidden, per-round-regenerated eval corpus + memory cap |
 | edit the harness/scorer/baseline | local honor system; the grader rebuilds the harness and `ssi-scoring` from its own trusted copy and takes only `src/ordering/` from the submission |
