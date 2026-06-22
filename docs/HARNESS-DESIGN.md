@@ -38,9 +38,11 @@ ssi-ordering-challenge/            (THE PUBLIC REPO / contestant template)
 │   ├── main.rs           harness driver (gate, stages, caps, scoring, output)[frozen]
 │   ├── pattern.rs        Pattern re-export + dev-corpus loader (JSONL)        [frozen]
 │   ├── purity.rs         local Stage-A purity & license gate                 [frozen]
+│   ├── watchdog.rs       subprocess supervision + SIGKILL at the time cap    [frozen]
+│   ├── perm_io.rs        parent↔worker permutation wire format               [frozen]
 │   └── ordering/         ★ contestant code — the only editable directory
-│       ├── mod.rs        pub fn order(&Pattern) -> Vec<usize>  (starter stub)
-│       └── memory/       agent notes + a reference ND+AMD demo
+│       ├── mod.rs        pub fn order(&Pattern) -> Vec<usize>  (identity starter stub)
+│       └── memory/       your working notes (ships with a placeholder README)
 ├── ssi-scoring/          THE SCORING WRAPPER (trusted; also used by grader)  [frozen]
 │   └── src/
 │       ├── lib.rs        score(), amd_baseline() via feral building blocks
@@ -48,7 +50,7 @@ ssi-ordering-challenge/            (THE PUBLIC REPO / contestant template)
 │       └── loader.rs     pattern_from_jsonl_line() + load_pattern() (.mtx); shared by harness & grader
 ├── prototype-oracle/     dev-only INDEPENDENT scorer, for the cross-check test
 ├── corpus/dev/           the shipped development corpus (patterns.jsonl sample)
-├── results.tsv           append-only run log (timestamp, status, score, note)
+├── results.tsv           append-only run log (timestamp, status, score, fill, note)
 ├── score.json            latest score, machine-readable
 └── docs/HARNESS-DESIGN.md
 ```

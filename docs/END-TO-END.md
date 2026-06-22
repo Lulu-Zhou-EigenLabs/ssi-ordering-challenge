@@ -160,7 +160,7 @@ graded score for the same ordering.
 
 ## 5. What is tested, and what each test guarantees
 
-`cargo test` runs four independent layers of checks. Together they pin the
+`cargo test` runs five independent layers of checks. Together they pin the
 claim *"the score is a correct, stable, value-independent function of
 (pattern, permutation), and the local path equals the grader path."*
 
