@@ -138,6 +138,42 @@ pipeline smoke-testing, not for ranking your idea — measure on the full corpus
 
 ## How to play
 
+### Quick start (with Claude Code)
+
+This repo ships ready for an agent to work in. `CLAUDE.md` (the working loop
+and constraints) and `.claude/settings.json` are already in place. The settings
+run in `dontAsk` mode with permissions scoped so the agent can edit
+`src/ordering/`, build, run, test, and commit **without prompting** — but is
+blocked from touching the harness, `ssi-scoring/`, `ssi-purity/`, `Cargo.toml`,
+and the tests. That scoping is what lets Claude run the benchmark loop on its
+own.
+
+> **Before you start: download the full dev corpus.** The
+> `corpus/dev/patterns.jsonl` in this repo is only a tiny smoke-test sample —
+> scores on it are not competitive reference numbers. Download the full
+> development corpus from **<CORPUS_DOWNLOAD_URL>** (placeholder — not yet
+> published) and replace `corpus/dev/patterns.jsonl` with it so you tune
+> against the real distribution. See `corpus/dev/README.md` for details.
+
+Launch Claude Code from the repo root and let it iterate:
+
+```sh
+claude -p --verbose "Read CLAUDE.md, study the current src/ordering/ and its memory/ notes, then improve on the best score so far. Repeat the build/run/score loop until you beat it, committing each improvement."
+```
+
+The `-p` flag runs Claude headless: it executes the prompt to completion and
+exits, with no interactive turns to wait on. `--verbose` streams each step
+(tool calls, runs, commits) to the terminal as it goes, instead of printing
+only the final result.
+
+Claude auto-loads `CLAUDE.md` and the permission settings, so it runs the loop
+end to end without stopping to ask. The competition backend pushes any
+submission that passes the grader with a better score back to the repo as the
+new best, so each run starts from the leading ordering and its
+`src/ordering/memory/` notes rather than from scratch.
+
+### Running the harness yourself
+
 ```sh
 cargo run --release -- --note "what I tried"
 ```
@@ -186,11 +222,33 @@ The purity gate enforces these mechanically for `src/ordering/`: it rejects
 build scripts, FFI/`extern`, `#[no_mangle]`/`#[link]`, proc-macros, `include!`
 outside the directory, and any added crate dependency.
 
-### Memory notes
+### How the agent works: the loop and the knowledge base
 
-As you iterate, add Markdown notes under `src/ordering/memory/` capturing
-approaches that worked, dead ends, and the reasoning behind important
-choices.
+This repo is built to be driven by an agent (see `CLAUDE.md`, which the agent
+reads on launch) running a tight loop: read what's known → form a hypothesis →
+edit `src/ordering/` → `cargo run --release` → read the per-matrix table and
+attribute wins/losses by family and size → record the result → commit if the
+score improved.
+
+What makes that loop *compound* across sessions and across competition rounds
+is the knowledge base under **`src/ordering/memory/`** — a small interlinked
+wiki, not a scratchpad. Nothing in it is read by the harness or grader; it
+exists so each session starts from the last one's understanding instead of
+re-deriving it. It is organized as:
+
+- **`index.md`** — the map of the base (read first), including the current best.
+- **`log.md`** — append-only history, one line per session.
+- **`open-questions.md`** — the research queue of leads worth chasing next.
+- **`literature/`** — one note per paper (the idea in your own words, plus how
+  it maps onto the `order()` contract and the 2 s/density caps).
+- **`techniques/`** — one page per algorithm family (where it wins/loses, its
+  cost profile vs the cap).
+- **`experiments/`** — one page per hypothesis you ran, and *why* it won or lost.
+
+When the agent researches, it searches the literature online, distills ideas
+into these pages (never copying fetched code), and keeps the index and links
+current. See `src/ordering/memory/README.md` for the page templates and the
+per-session discipline.
 
 ### Important note on openness
 
@@ -217,17 +275,6 @@ claims and re-run the benchmark before relying on them.
 - A. Wächter & L. T. Biegler, *On the implementation of an interior-point
   filter line-search algorithm*, Math. Program. 106 (2006). — where the KKT
   matrices come from.
-
-## Relationship to the production competition
-
-This repository is the **contestant-facing template** of the competition
-described in `COMPETITION-PROPOSAL.md`: same contract, same metric, same
-anti-cheat structure, same feral-backed scoring. The private grader scores
-submissions on a hidden, stratified, per-round-regenerated evaluation corpus
-(disjoint from this dev slice, drawn from the same distribution) in a
-no-network/no-filesystem sandbox behind the same purity & license gate, and
-calls the same `ssi-scoring` functions — so a contestant's local score predicts
-the graded score exactly. See `docs/HARNESS-DESIGN.md` for the architecture.
 
 ## License
 

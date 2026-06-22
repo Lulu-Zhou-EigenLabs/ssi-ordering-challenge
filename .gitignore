@@ -5,6 +5,9 @@
 # Harness output — regenerated every run, would create noise/conflicts
 score.json
 
+# Per-machine Claude Code permissions — local only, never published
+.claude/settings.local.json
+
 # Editor / OS noise
 *.swp
 .DS_Store
