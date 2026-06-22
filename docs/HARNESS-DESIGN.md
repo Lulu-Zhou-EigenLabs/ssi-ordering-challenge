@@ -129,6 +129,28 @@ targeted hypotheses. Failure messages name the offending matrix and reason
 | edit the harness/scorer/baseline | local honor system; the grader rebuilds the harness and `ssi-scoring` from its own trusted copy and takes only `src/ordering/` from the submission |
 | escape to non-Rust code / deps | `purity::check` rejects build scripts, FFI, `#[no_mangle]`/`#[link]`, proc-macros, and added dependencies in `src/ordering/`; `cargo-deny` rejects non-permissive licenses; the production grader builds offline against a vendored registry |
 
+### Why stdlib-only, and how to relax it
+
+The governing proposal requires submissions to be **pure Rust, no foreign-code
+escape, permissively licensed** (`COMPETITION-PROPOSAL.md` §2.4 / §6 Stage A) —
+it does *not* require the standard library only. **stdlib-only is a stricter
+policy this challenge adopts** because it is the cheapest airtight way to
+guarantee that pure-Rust rule. The hard case for "pure Rust" is *arbitrary*
+dependencies: a permissively licensed, innocently named crate can still hide an
+`extern "C"` block (or pull in a transitive dependency that does), which a
+license/name check cannot catch and a static FFI scan cannot reliably prove
+absent. Forbidding all dependencies removes that vector, so the gate only has
+to scan the contestant's own `src/ordering/`.
+
+This **can** be relaxed to a small **fixed allowlist** of vetted, permissive,
+pure-Rust crates without reopening that hole: hand-vet each crate and its
+transitive tree once, add it to the trusted workspace `Cargo.toml` and to
+`ALLOWED` in `ssi-purity`, and build offline/locked. Because the grader
+rebuilds from its own frozen manifest (overlaying only `src/ordering/`), the
+harness and grader see the same dependency set, so local↔grader equivalence
+holds automatically. The rationale and exact steps live next to the rule, in
+the `dependency_scan` doc comment in `ssi-purity/src/lib.rs`.
+
 ## 5. What still differs in the production grader
 
 Nothing about the contract, the metric, the baseline, or the scoring path

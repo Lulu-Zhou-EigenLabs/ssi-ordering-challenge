@@ -128,6 +128,43 @@ fn contains_attr(line: &str, name: &str) -> bool {
 /// is stdlib-only and cannot reach `[dependencies]` (they may edit only
 /// `src/ordering/`), this scan guards against a tampered manifest by checking
 /// the dependency set equals the known template set.
+///
+/// ## Why stdlib-only (and not just "pure Rust")
+///
+/// The governing proposal (`COMPETITION-PROPOSAL.md` §2.4/§6 Stage A) requires
+/// submissions to be **pure Rust, no foreign-code escape, permissively
+/// licensed** — it does NOT itself require the standard library only.
+/// stdlib-only is a deliberately STRICTER policy this challenge adopts because
+/// it is the cheapest airtight way to guarantee the proposal's pure-Rust rule.
+///
+/// The hard part of "pure Rust" is *arbitrary* dependencies: a permissively
+/// licensed, innocently named crate can still contain an `extern "C"` block —
+/// or pull in a transitive dependency that does — which is a non-Rust escape
+/// the license check and the `*-sys`/`build.rs` bans do not catch. Proving "no
+/// FFI anywhere in a tree of arbitrary crates" by static scan is unreliable
+/// (FFI can be macro-generated or `cfg`-gated). Forbidding ALL dependencies
+/// removes that vector entirely: with an empty set there is nothing to vet, so
+/// the gate's source scan only has to read the contestant's own `src/ordering/`
+/// (which it does, catching FFI the contestant writes directly).
+///
+/// ## Allowing a FIXED list of crates, if ever needed
+///
+/// This rule CAN be relaxed to permit a small, curated set of permissive,
+/// pure-Rust crates (e.g. a PRNG or a graph/partitioning crate) without
+/// reopening the hole above. The mechanism the proposal names (§6 Stage A,
+/// §10.2) is an offline build against a frozen, vendored registry: vet each
+/// allowlisted crate AND its transitive tree by hand ONCE (confirm no FFI / no
+/// `build.rs` / no `*-sys` / permissive license), pin it, and build `--offline
+/// --locked` so nothing else can enter. To wire it in here:
+///   1. add the vetted crate(s) to the trusted workspace `Cargo.toml` — note a
+///      contestant cannot do this themselves: the grader rebuilds from its own
+///      frozen manifest and overlays ONLY `src/ordering/`, so both the harness
+///      and grader see the SAME dependency set (local↔grader equivalence,
+///      Invariant 2, holds for free);
+///   2. extend `ALLOWED` below to include those crate names;
+///   3. keep the source scan and `cargo-deny` license check as-is.
+/// Until there is real demand, the zero-dependency policy stands because it is
+/// strictly simpler and already satisfies the governing docs.
 fn dependency_scan(cargo_toml: &Path) -> Result<(), GateError> {
     let src = std::fs::read_to_string(cargo_toml)
         .map_err(|e| GateError(format!("dependency-scan: cannot read {}: {e}", cargo_toml.display())))?;
