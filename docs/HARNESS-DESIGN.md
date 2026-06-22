@@ -59,7 +59,7 @@ Per run, `main.rs` executes the grader stages of the proposal in miniature:
 |---|---|
 | A — purity & license gate | `purity::check`: scans `src/ordering/` for build.rs / FFI / `#[no_mangle]` / `#[link]` / proc-macros / `include!` escapes / added dependencies, and runs `cargo-deny` against `deny.toml` (fallback to a dependency scan if cargo-deny is absent). Mirrors the grader's authoritative Stage A — same rules, same `deny.toml`. |
 | B — sandboxed compile & run | `cargo run` here runs each `order()` in a child process (`--worker` mode) supervised by a watchdog (`src/watchdog.rs`) that SIGKILLs it at the **2 s/matrix time cap** — the same enforcement mechanism the grader uses; the production grader additionally adds a no-network/no-filesystem sandbox and a 2–4 GB memory cap |
-| C — output validation | `validate_permutation`: exact bijection check; panics caught via `catch_unwind` |
+| C — output validation | `validate_permutation`: exact bijection check; a panic in `order()` aborts the worker process (non-zero exit, no perm file), which the parent treats as a failed run |
 | D — trusted scoring | `ssi_scoring::score`: feral's pattern-pure building blocks — `symmetric_pattern → permute_pattern → EliminationTree::from_pattern → column_counts_gnp`, then `nnz(L) = Σ cⱼ` and `flops = Σ cⱼ²`, computed from the permutation alone |
 | E — reproducibility | the ordering is run twice per matrix; outputs must be identical |
 

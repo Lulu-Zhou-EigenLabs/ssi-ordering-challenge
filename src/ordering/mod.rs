@@ -5,9 +5,18 @@
 //! Returns `perm[k]` = original index eliminated k-th; a bijection of `0..n`,
 //! deterministic, under the 2 s/matrix cap. stdlib only.
 //!
-//! Strategy (see memory/): nested dissection on grid-like structure (where it
-//! beats AMD asymptotically), arrow-hub deferral, and a quotient-graph
-//! minimum-degree fallback for everything else.
+//! Strategy (see memory/): GENERATE CANDIDATES, KEEP THE BEST. `order()` runs
+//! several orderings and returns whichever has the lowest predicted `Σc_j²`
+//! (`predict_flops`, the same metric the harness scores), so adding a candidate
+//! can only lower or tie the score, never raise it. The candidates are:
+//!   - supervariable quotient-graph AMD with LIFO and FIFO tie-breaks
+//!     (`order_amd`) — the workhorse;
+//!   - arrow-hub deferral when a dominant hub is detected (`ARROW_ENABLED`);
+//!   - exact min-fill for small matrices (n ≤ `MINFILL_MAX_N`);
+//!   - seeded random-restart AMD, budgeted to stay under the time cap.
+//! Nested dissection is implemented but DISABLED (`ND_ENABLED = false`): its
+//! BFS-separator quality never beat AMD on this corpus. Kept off the hot path
+//! for a future higher-quality (multilevel) separator. See the constants below.
 
 use crate::pattern::Pattern;
 

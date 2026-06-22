@@ -22,3 +22,5 @@
 1781495334	OK	0.991211	0.997400	iter8: disable arrow special-case (let AMD handle hubs)
 1781495363	OK	0.991211	0.997400	FINAL: supervariable AMD, arrow safeguard on, ND off — score 0.9912
 1781495416	OK	0.991211	0.997400	FINAL clean: supervariable AMD (ND off, arrow safeguard on) — 0.9912
+1782105063	OK	0.969132	0.986992	time_cap test: normal
+1782105064	FAIL	NaN	NaN	time_cap test: slow

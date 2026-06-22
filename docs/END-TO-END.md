@@ -131,19 +131,19 @@ Driven by one command:
 cargo run --release -- --note "what I tried"
 ```
 
-which runs `fn main()` (`src/main.rs:56`). It executes the production grader's
+which runs `fn main()` (`src/main.rs`). It executes the production grader's
 five stages in miniature; **any failure on any matrix fails the whole run** (no
 partial credit):
 
 | Stage | What happens | Code |
 |---|---|---|
 | **A — purity & license** | scan `src/ordering/` for non-stdlib escapes (added deps, `build.rs`, FFI, `#[no_mangle]`/`#[link]`, proc-macros, `include!` escapes) | `src/purity.rs` → `ssi-purity` |
-| **load corpus** | read every line of `corpus/dev/patterns.jsonl` into `(name, Pattern)` | `pattern::dev_corpus()` (`src/pattern.rs`) |
-| **B — run order()** | call `order()` **twice**, timed against a 2 s/matrix cap; a panic or cap breach fails the run | `src/main.rs:93` |
-| **C — validate** | the returned permutation must be a true bijection of `0..n` | `validate_permutation` (`src/main.rs:172`) |
-| **E — determinism** | the two `order()` runs must return byte-identical permutations | `src/main.rs:117` |
-| **D — score** | `score(pattern, perm)` — the same function used for the baseline | `src/main.rs:127` |
-| **aggregate + emit** | `score = exp(mean(ln ratio))`; write `score.json`, append a row to `results.tsv` | `src/main.rs:149` |
+| **load corpus** | read every line of `corpus/dev/patterns.jsonl` into `(raw_index, name, Pattern)` | `pattern::dev_corpus_indexed()` (`src/pattern.rs`) |
+| **B — run order()** | run `order()` **twice** in a killable child process, timed against a 2 s/matrix cap; a panic or cap breach fails the run | `src/main.rs` (`run_once`) |
+| **C — validate** | the returned permutation must be a true bijection of `0..n` | `validate_permutation` (`src/main.rs`) |
+| **E — determinism** | the two `order()` runs must return byte-identical permutations | `src/main.rs` (`perm1 != perm2`) |
+| **D — score** | `score(pattern, perm)` — the same function used for the baseline | `src/main.rs` (`let yours = score`) |
+| **aggregate + emit** | `score = exp(mean(ln ratio))`; write `score.json`, append a row to `results.tsv` | `src/main.rs` (`append_results`) |
 
 A full line-by-line trace is in [`WORKFLOW.md`](WORKFLOW.md) §2.
 
@@ -170,7 +170,7 @@ claim *"the score is a correct, stable, value-independent function of
 | **Scorer cross-check** | `tests/scorer_crosscheck.rs` | The feral-backed scorer agrees **exactly** (nnz_l and flops) with an *independent* reimplementation (`prototype-oracle`) across arrows, 2D/3D grids, and KKT families, under identity, reverse, and AMD orderings. Two independent codes agreeing rules out a shared bug. |
 | **Exact equivalence (pins)** | `tests/exact_equivalence.rs` | Pinned `(nnz_l, flops)` for the identity ordering on three committed sample matrices (`st_e09`, `ex8_5_2`, `gilbert`), so *any* drift in the scoring path breaks the build immediately. `gilbert` (a hub-last arrow) has a closed-form pin (nnz_l = 2·1000+1 = 2001) proving the numbers are genuine, not transcribed. |
 | **Narrow input** | `tests/narrow_input.rs` | Two matrices with identical structure but different values load to byte-identical `Pattern`s and score identically — the value column is never consulted. (The JSONL corpus has no values at all; this pins the property for the `.mtx` `load_pattern` path the grader tooling still uses.) |
-| **Submission self-checks** | `src/ordering/mod.rs:1143` | The contestant's private `predict_flops` matches the same closed-form facts, and `order()` returns a valid bijection — so the candidate selector scores candidates with the same metric the harness uses. |
+| **Submission self-checks** | `src/ordering/mod.rs` (`mod tests`) | The contestant's private `predict_flops` matches the same closed-form facts, and `order()` returns a valid bijection — so the candidate selector scores candidates with the same metric the harness uses. |
 
 There is **no loader-agreement test** anymore: with a single shared JSONL
 reader, the "two parsers might disagree" failure it guarded against cannot
