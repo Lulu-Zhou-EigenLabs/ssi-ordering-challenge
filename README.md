@@ -166,9 +166,17 @@ is sourced.
 You may modify **anything inside `src/ordering/`** — split it into
 submodules, rewrite primitives, refactor freely.
 
+> **What ships in `src/ordering/` today.** The repo includes a *worked
+> reference* ordering (a multi-candidate supervariable-AMD implementation), not
+> an empty stub — so a fresh clone scores a real, non-trivial result out of the
+> box. It is a starting point to study and beat, not a fixed part of the
+> harness: replace it wholesale if you like. The only contract is the `order()`
+> signature; everything else under `src/ordering/` is yours.
+
 You may **not** touch the harness:
 
 - `src/main.rs`, `src/pattern.rs`, `src/purity.rs` — the contract and gates.
+- `src/watchdog.rs`, `src/perm_io.rs` — the subprocess time-cap enforcement.
 - `ssi-scoring/` — the trusted scoring wrapper (also used by the grader).
 - `ssi-purity/` — the shared Stage-A purity gate (also used by the grader).
 - `Cargo.toml` / `deny.toml` — dependency and license policy.
