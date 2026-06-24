@@ -74,11 +74,12 @@ fn main() {
         std::process::exit(1);
     }
 
+    let corpus_file = pattern::corpus_path();
     let corpus = pattern::dev_corpus_indexed();
     if corpus.is_empty() {
         println!(
             "RUN FAILED: no patterns found at {}. Run from the repo root.",
-            pattern::DEV_CORPUS_FILE
+            corpus_file.display()
         );
         std::process::exit(1);
     }
@@ -97,7 +98,10 @@ fn main() {
     let exe = std::env::current_exe().expect("locate harness executable");
     let scratch = std::env::temp_dir().join(format!("ssi-harness-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).expect("create scratch dir");
-    let jsonl_path = pattern::DEV_CORPUS_FILE.to_string();
+    // The worker must load from the SAME corpus file the parent just indexed —
+    // otherwise the parent's raw line index would resolve a different matrix in
+    // the worker. corpus_path() honors $SSI_CORPUS_FILE (the grader's eval seam).
+    let jsonl_path = corpus_file.to_string_lossy().into_owned();
     let cap = watchdog::CapConfig { time_cap: TIME_CAP_PER_MATRIX, poll: std::time::Duration::from_millis(10) };
 
     for (line_index, name, pat) in &corpus {

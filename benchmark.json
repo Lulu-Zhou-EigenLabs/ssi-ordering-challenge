@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "ssi-ordering-challenge",
+  "description": "Fill-reducing elimination ordering for sparse symmetric indefinite matrices; scored as geomean predicted factorization flops vs feral AMD (lower is better).",
+  "category": "optimization",
+  "direction": "-",
+  "editablePaths": ["src/ordering"],
+  "setupCommand": ["bash", "-lc", "cargo build --release"],
+  "benchmarkCommand": ["bash", "-lc", "cargo run --release"],
+  "scorePath": "score.json",
+  "runner": { "provider": "github-actions", "workflow": "benchmark.yml" }
+}

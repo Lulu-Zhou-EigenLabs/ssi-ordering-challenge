@@ -23,13 +23,38 @@ pub use ssi_scoring::Pattern;
 /// The shipped public development corpus: one JSONL file of CSC patterns.
 pub const DEV_CORPUS_FILE: &str = "corpus/dev/patterns.jsonl";
 
+/// Optional environment override for the corpus path. UNSET in every contestant
+/// run, so local behavior is unchanged: the harness grades the public dev corpus
+/// (`DEV_CORPUS_FILE`). The grading workflow sets this to the downloaded EVAL
+/// corpus at a temp path *outside* the repo tree, so the eval bytes are never in
+/// a tracked file and can never be committed (publish-to-Yukon plan §1). This is
+/// the corpus-path seam: additive and default-preserving — it does not touch the
+/// contract (signature/score/gates/output formats are unchanged).
+pub const CORPUS_FILE_ENV: &str = "SSI_CORPUS_FILE";
+
+/// Resolve the corpus path from a (possibly absent) env-var value, defaulting to
+/// the public dev corpus when unset or blank. Split out from the env read so it
+/// is testable without mutating process-global state.
+fn resolve_corpus_path_from(env_value: Option<String>) -> PathBuf {
+    match env_value {
+        Some(v) if !v.trim().is_empty() => PathBuf::from(v),
+        _ => PathBuf::from(DEV_CORPUS_FILE),
+    }
+}
+
+/// The corpus path this run grades: `$SSI_CORPUS_FILE` if set and non-blank,
+/// else the public dev corpus.
+pub fn corpus_path() -> PathBuf {
+    resolve_corpus_path_from(std::env::var(CORPUS_FILE_ENV).ok())
+}
+
 /// Load the dev corpus tagged with each entry's 0-based RAW line index in
 /// `patterns.jsonl` (blank lines counted), so the parent can hand the worker the
 /// exact index `ssi_scoring::load_pattern_jsonl_line` will resolve. Parsing
 /// still goes through the shared `ssi_scoring::load_corpus_jsonl` reader; this
 /// only recovers the raw indices of the non-blank lines it kept.
 pub fn dev_corpus_indexed() -> Vec<(usize, String, Pattern)> {
-    let path = PathBuf::from(DEV_CORPUS_FILE);
+    let path = corpus_path();
     let corpus = match ssi_scoring::load_corpus_jsonl(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -59,6 +84,28 @@ pub fn dev_corpus_indexed() -> Vec<(usize, String, Pattern)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corpus_path_defaults_to_dev_when_env_unset() {
+        // Contestants never set SSI_CORPUS_FILE; the default must be the public
+        // dev corpus so local runs are unchanged (contract-invisible seam).
+        assert_eq!(resolve_corpus_path_from(None), PathBuf::from(DEV_CORPUS_FILE));
+    }
+
+    #[test]
+    fn corpus_path_honors_env_override() {
+        // The grader workflow sets SSI_CORPUS_FILE to the downloaded eval corpus
+        // at a temp path outside the repo tree (§1 of the publish plan).
+        let eval = "/tmp/eval.jsonl";
+        assert_eq!(resolve_corpus_path_from(Some(eval.to_string())), PathBuf::from(eval));
+    }
+
+    #[test]
+    fn corpus_path_treats_blank_env_as_unset() {
+        // A defined-but-empty env var must not silently point the harness at "".
+        assert_eq!(resolve_corpus_path_from(Some(String::new())), PathBuf::from(DEV_CORPUS_FILE));
+        assert_eq!(resolve_corpus_path_from(Some("   ".to_string())), PathBuf::from(DEV_CORPUS_FILE));
+    }
 
     #[test]
     fn indexed_corpus_matches_single_line_loader() {

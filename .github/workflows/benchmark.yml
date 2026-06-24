@@ -1,0 +1,84 @@
+name: benchmark
+
+# Yukon GitHub Actions execution provider: this workflow IS the grader.
+# Yukon builds a candidate ref (validated baseline + the submission's
+# src/ordering/ only) and dispatches THIS workflow on it; the score artifact is
+# the machine-readable channel it reads back. See docs/PUBLISH-TO-YUKON-PLAN.md.
+#
+# Dispatch-only by design: no `pull_request` trigger. Yukon (or an explicit
+# maintainer click) is the only thing that may start paid runner minutes, and
+# head-SHA correlation works regardless of what triggered the run. Adding a
+# `pull_request` trigger would let fork/maintainer PRs start runs and would
+# double-run every Yukon submission.
+on:
+  workflow_dispatch:
+
+# The workflow needs no Yukon credentials: the dispatched ref already IS the
+# payload, and Yukon posts the score table on the PR itself. Read-only repo
+# access is all the grading run requires.
+permissions:
+  contents: read
+
+# One run per ref; retried dispatches for the same attempt dedupe. Do NOT
+# cancel in progress — a near-complete grading run should finish, not be killed
+# by a re-dispatch.
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dispatched ref
+        uses: actions/checkout@v4 # checks out the dispatched ref by default
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@stable # honors the repo's rust-toolchain file
+
+      # Stable step name "Setup": a failure here maps to setup_failed.
+      - name: Setup
+        run: cargo build --release
+
+      # Fetch today's hidden EVAL corpus to a temp path OUTSIDE the repo tree, so
+      # the eval bytes never sit at a tracked path and can never be committed
+      # (publish plan §1). When no eval bucket is configured (milestone 1, before
+      # the bucket exists), this is a no-op and the run grades the committed
+      # PUBLIC dev corpus — proving the self-grading loop end to end first.
+      - name: Fetch eval corpus
+        id: corpus
+        env:
+          EVAL_BUCKET_NAME: ${{ secrets.EVAL_BUCKET_NAME }}
+          EVAL_BUCKET_ENDPOINT: ${{ secrets.EVAL_BUCKET_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.EVAL_BUCKET_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.EVAL_BUCKET_SECRET }}
+          AWS_DEFAULT_REGION: ${{ secrets.EVAL_BUCKET_REGION }}
+        run: |
+          if [ -z "${EVAL_BUCKET_NAME:-}" ]; then
+            echo "No EVAL_BUCKET_NAME secret set; grading the committed public dev corpus."
+            echo "corpus_file=" >> "$GITHUB_OUTPUT"
+          else
+            ./.github/scripts/fetch-eval-corpus.sh "$RUNNER_TEMP/eval.jsonl"
+            echo "corpus_file=$RUNNER_TEMP/eval.jsonl" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Stable step name "Benchmark": a failure here maps to benchmark_failed.
+      # SSI_CORPUS_FILE is the harness's corpus-path seam; when the fetch step
+      # produced no eval file the value is empty, which the seam treats as unset
+      # and falls back to the dev corpus (default-preserving).
+      - name: Benchmark
+        env:
+          SSI_CORPUS_FILE: ${{ steps.corpus.outputs.corpus_file }}
+        run: cargo run --release
+
+      # The score artifact is the channel Yukon reads. Upload even on failure so
+      # a partial/zero score is visible rather than silently lost; the run still
+      # concludes `failure` (the harness exits non-zero on any gate failure),
+      # which is what Yukon keys its accept/reject decision on.
+      - name: Upload score
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: score
+          path: score.json
+          if-no-files-found: ignore
