@@ -115,12 +115,24 @@ competitive reference numbers (the sample is dominated by tiny near-clique
 matrices where ordering barely matters).
 
 The **full development corpus** (~279 patterns, n up to ~340,000) is published
-for download separately; fetch it and tune against the full distribution either
-by replacing `corpus/dev/patterns.jsonl`, or — without touching the in-repo
-file — by pointing the harness at the download:
+as a **GitHub release asset** (it is too large to commit, and a release keeps it
+off the git tree so clones stay small). Download the latest and verify it:
 
 ```sh
-SSI_CORPUS_FILE=/path/to/full/patterns.jsonl cargo run --release -- --note "full corpus"
+BASE=https://github.com/Lulu-Zhou-EigenLabs/ssi-ordering-challenge/releases/latest/download
+curl -L -o patterns.jsonl        "$BASE/patterns.jsonl"
+curl -L -o patterns.jsonl.sha256 "$BASE/patterns.jsonl.sha256"
+shasum -a 256 -c patterns.jsonl.sha256   # Linux: sha256sum -c patterns.jsonl.sha256
+```
+
+The `/releases/latest/download/` URL always resolves to the newest release, so it
+keeps working as the corpus rotates per round; pin a specific round with
+`.../releases/download/<tag>/patterns.jsonl` instead. Then tune against the full
+distribution either by replacing `corpus/dev/patterns.jsonl`, or — without
+touching the in-repo file — by pointing the harness at the download:
+
+```sh
+SSI_CORPUS_FILE=$PWD/patterns.jsonl cargo run --release -- --note "full corpus"
 ```
 
 `SSI_CORPUS_FILE` overrides the corpus path for one run; unset (the default), the
@@ -159,9 +171,12 @@ own.
 > **Before you start: download the full dev corpus.** The
 > `corpus/dev/patterns.jsonl` in this repo is only a tiny smoke-test sample —
 > scores on it are not competitive reference numbers. Download the full
-> development corpus from **<CORPUS_DOWNLOAD_URL>** (placeholder — not yet
-> published) and replace `corpus/dev/patterns.jsonl` with it so you tune
-> against the real distribution. See `corpus/dev/README.md` for details.
+> development corpus from the latest **GitHub release**
+> ([`/releases/latest`](https://github.com/Lulu-Zhou-EigenLabs/ssi-ordering-challenge/releases/latest))
+> and either replace `corpus/dev/patterns.jsonl` with it or point the harness at
+> it via `SSI_CORPUS_FILE`, so you tune against the real distribution. See
+> "The corpus: in-repo sample vs. full download" above and `corpus/dev/README.md`
+> for the exact commands.
 
 Launch Claude Code from the repo root and let it iterate:
 

@@ -28,12 +28,23 @@ Each line is one symmetric sparsity pattern as compressed-sparse-column (CSC):
 
 The full development corpus (~279 patterns, up to n≈340k) is produced by the
 `corpus-generation` pipeline and is **not committed here** (it is ~225 MB). It
-is published for download separately; fetch it and tune against the full set
-either by replacing this `patterns.jsonl`, or by leaving it in place and pointing
-the harness at the download for one run:
+is published as a **GitHub release asset** (a release keeps a file this large off
+the git tree, so clones stay small). Download the latest and verify it:
 
 ```sh
-SSI_CORPUS_FILE=/path/to/full/patterns.jsonl cargo run --release
+BASE=https://github.com/Lulu-Zhou-EigenLabs/ssi-ordering-challenge/releases/latest/download
+curl -L -o patterns.jsonl        "$BASE/patterns.jsonl"
+curl -L -o patterns.jsonl.sha256 "$BASE/patterns.jsonl.sha256"
+shasum -a 256 -c patterns.jsonl.sha256   # Linux: sha256sum -c patterns.jsonl.sha256
+```
+
+`/releases/latest/download/` always resolves to the newest release (the corpus
+rotates per round); pin a round with `.../releases/download/<tag>/patterns.jsonl`.
+Then tune against the full set either by replacing this `patterns.jsonl`, or by
+leaving it in place and pointing the harness at the download for one run:
+
+```sh
+SSI_CORPUS_FILE=$PWD/patterns.jsonl cargo run --release
 ```
 
 `SSI_CORPUS_FILE` overrides the corpus path; unset, the harness grades this
