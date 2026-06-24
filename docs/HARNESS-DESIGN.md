@@ -34,9 +34,16 @@ symbolic analysis, via the `ssi-scoring` crate that the grader also uses.
 ssi-ordering-challenge/            (THE PUBLIC REPO / contestant template)
 ├── Cargo.toml            workspace root; harness package + members          [frozen]
 ├── deny.toml             shared license policy (cargo-deny)                  [frozen]
+├── benchmark.json        Yukon import manifest (runner, editablePaths, score)[frozen]
+├── .github/
+│   ├── workflows/
+│   │   └── benchmark.yml self-grading workflow (Yukon dispatches it)         [frozen]
+│   └── scripts/
+│       └── fetch-eval-corpus.sh  pulls the hidden eval corpus at run time    [frozen]
 ├── src/
 │   ├── main.rs           harness driver (gate, stages, caps, scoring, output)[frozen]
-│   ├── pattern.rs        Pattern re-export + dev-corpus loader (JSONL)        [frozen]
+│   ├── pattern.rs        Pattern re-export + corpus loader (JSONL); honors
+│   │                     the SSI_CORPUS_FILE path override                    [frozen]
 │   ├── purity.rs         local Stage-A purity & license gate                 [frozen]
 │   ├── watchdog.rs       subprocess supervision + SIGKILL at the time cap    [frozen]
 │   ├── perm_io.rs        parent↔worker permutation wire format               [frozen]
@@ -98,8 +105,13 @@ construction). The stored pattern includes the diagonal; the shared reader
 `ssi_scoring::pattern_from_jsonl_line` drops it to produce the off-diagonal
 contract `Pattern`. **What ships in the repo is a small sample** (13 matrices)
 for pipeline smoke-testing; the full corpus (~279 patterns, n up to ~340k) is
-published for download (see `corpus/dev/README.md`). The grader scores a
-disjoint, hidden evaluation slice from the same distribution. The synthetic
+published for download (see `corpus/dev/README.md`). The corpus path defaults to
+`corpus/dev/patterns.jsonl` but is overridable per run via the `SSI_CORPUS_FILE`
+environment variable (`pattern::corpus_path`); unset or blank, the default
+holds, so the override is invisible to contestants who don't use it. The grader
+sets it to the downloaded eval corpus at a temp path outside the repo tree, so
+the eval bytes are never committed; it scores a disjoint, hidden evaluation
+slice from the same distribution. The synthetic
 generators of the prototype (`arrow`, `grid2d`, `grid3d`, `kkt`) survive only
 as `cargo test` fixtures in the `prototype-oracle` crate.
 
@@ -156,21 +168,30 @@ the `dependency_scan` doc comment in `ssi-purity/src/lib.rs`.
 ## 5. What still differs in the production grader
 
 Nothing about the contract, the metric, the baseline, or the scoring path
-changes — those are shared via `ssi-scoring`. The grader adds:
+changes — those are shared via `ssi-scoring`, and **the grader is this same
+harness binary**. Grading runs in the repo's own GitHub Actions
+(`.github/workflows/benchmark.yml`), which the Yukon platform dispatches against
+a candidate built from the validated baseline + the submission's `src/ordering/`
+only. The workflow just runs `cargo run --release` and uploads `score.json`;
+there is no separate scoring code to drift from what you run locally. Grading
+adds:
 
 1. **The hidden eval corpus**: a disjoint, stratified, per-round-regenerated
-   slice from the same IPM-harvested distribution (Phase 2 built the pipeline;
-   `grader/` holds it). Patterns only — no reference labeling needed.
+   slice from the same IPM-harvested distribution (Phase 2 built the pipeline).
+   The workflow injects it via `SSI_CORPUS_FILE`, downloaded at run time to a
+   temp path outside the repo tree — so the eval bytes are never committed and
+   never published. Patterns only — no reference labeling needed.
 2. **The sandbox**: contestant crate compiled offline against a vendored
    registry, run with no network/filesystem, 2–4 GB memory cap (which doubles
    as the anti-lookup-table cap).
-3. **The leaderboard wiring**: PR/upload → CI runs stages A–E → one number
-   posted; anchors AMD = 1.00 with METIS-style nested dissection and MUMPS
-   fill as reference lines.
+3. **The platform wiring**: Yukon opens a PR per submission, dispatches the
+   workflow on its head commit, reads the uploaded `score.json`, posts the
+   score + metrics, and merges (accept) or closes (reject). AMD = 1.00 is the
+   anchor; METIS-style nested dissection and MUMPS fill are reference lines.
 
 The local purity/license gate (`purity.rs` + `deny.toml`) is the same code and
-policy the grader's Stage A uses, so a submission that passes locally passes the
-server's gate.
+policy the workflow's run executes, so a submission that passes locally passes
+the server's gate.
 
 ## 6. Verification built into `cargo test`
 

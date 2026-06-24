@@ -115,8 +115,16 @@ competitive reference numbers (the sample is dominated by tiny near-clique
 matrices where ordering barely matters).
 
 The **full development corpus** (~279 patterns, n up to ~340,000) is published
-for download separately; fetch it and replace `corpus/dev/patterns.jsonl` to
-tune against the full distribution. See `corpus/dev/README.md`. The hidden
+for download separately; fetch it and tune against the full distribution either
+by replacing `corpus/dev/patterns.jsonl`, or — without touching the in-repo
+file — by pointing the harness at the download:
+
+```sh
+SSI_CORPUS_FILE=/path/to/full/patterns.jsonl cargo run --release -- --note "full corpus"
+```
+
+`SSI_CORPUS_FILE` overrides the corpus path for one run; unset (the default), the
+harness grades the in-repo sample. See `corpus/dev/README.md`. The hidden
 evaluation corpus the grader ranks on is never published.
 
 ### Reference numbers
@@ -180,7 +188,9 @@ cargo run --release -- --note "what I tried"
 
 That single command runs the purity/license gate, scores every dev matrix,
 writes `score.json`, and appends one row to `results.tsv` with timestamp,
-status, score, fill ratio, and your note.
+status, score, fill ratio, and your note. It grades `corpus/dev/patterns.jsonl`
+by default; set `SSI_CORPUS_FILE=/path/to/patterns.jsonl` to grade a corpus at
+another path for that run (e.g. the full download) without editing the repo.
 
 `cargo test --release` runs the harness's self-checks (closed-form scorer
 tests, the scorer cross-check against an independent oracle, the narrow-input

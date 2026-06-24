@@ -28,6 +28,13 @@ Each line is one symmetric sparsity pattern as compressed-sparse-column (CSC):
 
 The full development corpus (~279 patterns, up to n≈340k) is produced by the
 `corpus-generation` pipeline and is **not committed here** (it is ~225 MB). It
-is published for download separately; fetch it and replace this `patterns.jsonl`
-to tune against the full set. The competition's hidden evaluation corpus is
-never published.
+is published for download separately; fetch it and tune against the full set
+either by replacing this `patterns.jsonl`, or by leaving it in place and pointing
+the harness at the download for one run:
+
+```sh
+SSI_CORPUS_FILE=/path/to/full/patterns.jsonl cargo run --release
+```
+
+`SSI_CORPUS_FILE` overrides the corpus path; unset, the harness grades this
+in-repo sample. The competition's hidden evaluation corpus is never published.

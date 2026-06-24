@@ -226,16 +226,21 @@ recorded there; keep the reasoning behind each step in `src/ordering/memory/`.
 
 ## 6. How this maps to the production grader
 
-The grader (`grader/`, private, never published) repeats Stages A–E against a
-**hidden** eval corpus that is disjoint from the dev corpus and regenerated per
-round. It extracts **only** `src/ordering/` from a submission, drops it into its
-own trusted copy of the harness, and scores inside a sandbox (no network, no
-filesystem, 2–4 GB memory cap, determinism re-runs).
+**The grader is this same harness binary**, run in the repo's own GitHub Actions
+(`.github/workflows/benchmark.yml`) and dispatched by the Yukon platform. It
+builds a candidate from the validated baseline + **only** the submission's
+`src/ordering/`, runs the workflow, and reads the uploaded `score.json`. The
+workflow grades a **hidden** eval corpus — disjoint from the dev corpus,
+regenerated per round — injected via the `SSI_CORPUS_FILE` path override and
+downloaded at run time to a temp path outside the repo tree (so the eval bytes
+are never committed). Scoring runs in a sandbox (no network, no filesystem,
+2–4 GB memory cap, determinism re-runs).
 
-Because both sides score through the identical `ssi-scoring` functions, the
-number you see locally is structurally the number the grader reproduces for the
-same ordering — the design's exact-grader equivalence. What the grader adds is
-the hidden corpus, the sandbox, and the leaderboard wiring; the contract, the
-metric, the baseline, and the scoring path are unchanged. See
+Because grading runs the identical harness + `ssi-scoring` functions you run
+locally, the number you see locally is structurally the number the grader
+reproduces for the same ordering — the design's exact-grader equivalence. What
+grading adds is the hidden corpus, the sandbox, and the platform wiring (PR per
+submission, dispatch, score comment, accept/close); the contract, the metric,
+the baseline, and the scoring path are unchanged. See
 [`HARNESS-DESIGN.md`](HARNESS-DESIGN.md) §4–§5 for the anti-cheat analysis and
 the precise list of grader-only additions.

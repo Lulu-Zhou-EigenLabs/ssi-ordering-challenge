@@ -37,7 +37,7 @@ objective) is what makes the whole search space safe to expose. See
 | **Scoring wrapper** | `ssi-scoring/` | the ONE code path that calls feral: the reader, the scorer, the AMD baseline | trusted |
 | **Purity gate** | `ssi-purity/` | the Stage-A scan (shared with the grader) | trusted |
 | **Dev corpus** | `corpus/dev/patterns.jsonl` | the input matrices (a small in-repo sample) | public data |
-| **Grader** | `grader/` (separate, private) | ranks submissions on a hidden corpus | trusted, never published |
+| **Grader** | this same harness, run in `.github/workflows/benchmark.yml` | ranks submissions on a hidden corpus injected via `SSI_CORPUS_FILE` | trusted; the corpus is never published |
 
 The crucial invariant tying these together: **one scoring path**. The harness
 (what a contestant runs locally) and the grader (what ranks them) both score by
@@ -202,18 +202,23 @@ contract details and a suggested approach.
 
 ## 7. From local harness to the production grader
 
-The grader (`grader/`, private, never published) repeats Stages A–E against a
-**hidden** eval corpus — disjoint from the dev corpus, drawn from the same
-distribution, regenerated per round. It extracts **only** `src/ordering/` from a
-submission, drops it into its own trusted copy of the harness, and scores inside
-a sandbox (no network, no filesystem, a 2–4 GB memory cap, determinism re-runs).
+**The grader is this same harness binary**, run in the repo's own GitHub Actions
+(`.github/workflows/benchmark.yml`) rather than a separate program. The Yukon
+platform builds a candidate from the validated baseline + **only** the
+submission's `src/ordering/`, dispatches the workflow on it, and reads the
+uploaded `score.json`. The workflow grades a **hidden** eval corpus — disjoint
+from the dev corpus, drawn from the same distribution, regenerated per round —
+injected via the `SSI_CORPUS_FILE` path override, downloaded at run time to a
+temp path outside the repo tree (so the eval bytes are never committed). Scoring
+runs in a sandbox (no network, no filesystem, a 2–4 GB memory cap, determinism
+re-runs).
 
-Because both sides score through the identical `ssi-scoring` functions, the
-number a contestant sees locally is structurally the number the grader
-reproduces for the same ordering. What the grader adds is the hidden corpus, the
-sandbox, and the leaderboard wiring; the contract, the metric, the baseline, and
-the scoring path are unchanged. The anti-cheat reasoning is in
-`HARNESS-DESIGN.md` §4–§5.
+Because grading runs the identical harness + `ssi-scoring` functions you run
+locally, the number a contestant sees locally is structurally the number the
+grader reproduces for the same ordering. What grading adds is the hidden corpus,
+the sandbox, and the platform wiring (PR per submission, dispatch, score
+comment, accept/close); the contract, the metric, the baseline, and the scoring
+path are unchanged. The anti-cheat reasoning is in `HARNESS-DESIGN.md` §4–§5.
 
 ### The corpus, sample vs. full
 
