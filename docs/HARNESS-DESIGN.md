@@ -15,8 +15,10 @@ symbolic analysis, via the `ssi-scoring` crate that the grader also uses.
    recomputes everything from that permutation; there is no number the
    contestant could fake.
 2. **Narrow input.** The function sees the sparsity pattern only — no
-   values, no right-hand side, no labels. The `Pattern` type has no field for
-   values; the loader drops them. Asserted in `tests/narrow_input.rs`.
+   values, no right-hand side, no labels. Holds by construction: the corpus
+   format (`patterns.jsonl`) is pattern-only — a line carries `n`, `indptr`,
+   and `indices` with no value column — and the `Pattern` type has no field for
+   values, so there is nothing for the loader to carry through.
 3. **Correctness is decoupled.** Any bijection of `0..n` factors correctly;
    the contestant can only move the cost. This makes the whole search space
    safe for unattended agents to explore.
@@ -55,7 +57,7 @@ ssi-ordering-challenge/            (THE PUBLIC REPO / contestant template)
 │   └── src/
 │       ├── lib.rs        score(), amd_baseline() via feral building blocks
 │       ├── pattern.rs    the Pattern type (structure only)
-│       └── loader.rs     pattern_from_jsonl_line() + load_pattern() (.mtx); shared by harness & grader
+│       └── loader.rs     pattern_from_jsonl_line() — the one corpus parser, shared by harness & grader
 ├── prototype-oracle/     dev-only INDEPENDENT scorer, for the cross-check test
 ├── corpus/dev/           the shipped development corpus (patterns.jsonl sample)
 ├── results.tsv           append-only run log (timestamp, status, score, fill, note)
@@ -215,6 +217,9 @@ the server's gate.
   the build immediately. `gilbert` (n=1001) is a hub-last arrow/star under
   natural order (leaf columns cost 2, the hub 1 — zero fill), so its pin
   `nnz_l = 2·1000 + 1 = 2001` is a closed-form check the numbers are genuine.
-- **Narrow input** (`tests/narrow_input.rs`): different values, identical
-  pattern ⇒ identical score; the `.mtx` value column is never consulted (and the
-  JSONL corpus carries no values at all).
+- **Narrow input** (by construction, no test needed): the corpus format
+  (`patterns.jsonl`) carries no values at all — only `n`, `indptr`, `indices` —
+  and `Pattern` has no field for values, so there is nothing a contestant could
+  peek at. (The former `tests/narrow_input.rs` demonstrated value-dropping on
+  the `.mtx` format; that loader path is retired with the dual-reader design,
+  and narrow input now holds structurally rather than by demonstration.)

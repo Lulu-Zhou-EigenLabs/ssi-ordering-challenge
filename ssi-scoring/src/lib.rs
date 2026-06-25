@@ -50,7 +50,7 @@ mod loader;
 mod pattern;
 
 pub use loader::{
-    load_corpus_jsonl, load_pattern, load_pattern_jsonl_line, pattern_from_jsonl_line, LoadError,
+    load_corpus_jsonl, load_pattern_jsonl_line, pattern_from_jsonl_line, LoadError,
 };
 pub use pattern::Pattern;
 
