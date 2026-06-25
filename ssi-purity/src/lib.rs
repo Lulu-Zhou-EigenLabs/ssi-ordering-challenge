@@ -1,10 +1,14 @@
 //! Shared Stage-A purity & license gate (lifted from the harness's src/purity.rs
-//! in Phase 4a so the harness and the grader scan submissions with ONE
-//! implementation). Two modes:
+//! in Phase 4a so submissions are scanned by ONE implementation). The grader
+//! runs this same harness binary, so both local and graded runs use the same
+//! mode — `FallbackAllowed` — and cannot drift. Two modes exist:
 //! - `Mode::FallbackAllowed` — if `cargo-deny` is absent, fall back to the
-//!   dependency scan with a printed note (what the local harness uses).
-//! - `Mode::RequireDeny` — `cargo-deny` MUST be installed and pass; no fallback
-//!   (what the grader uses; authoritative).
+//!   dependency scan with a printed note. Sound under the zero-dependency
+//!   policy: with no added crates there is no new license to vet. This is what
+//!   the harness (and thus the grader) uses today.
+//! - `Mode::RequireDeny` — `cargo-deny` MUST be installed and pass; no fallback.
+//!   Dormant: reserved for when the dependency allowlist grows to vetted
+//!   third-party crates and the authoritative license check starts to matter.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -212,8 +216,10 @@ fn dependency_names(toml: &str) -> Vec<String> {
 /// `FallbackAllowed` mode, a missing `cargo-deny` falls back to the dependency
 /// scan (already run) with a printed note — a submission that adds no dependency
 /// cannot pull in a non-permissive license, so the fallback is sound for the
-/// stdlib-only contract. In `RequireDeny` mode (the grader), a missing
-/// `cargo-deny` is fatal: the authoritative check must run.
+/// stdlib-only contract (the mode both the harness and the grader use today).
+/// In the dormant `RequireDeny` mode, a missing `cargo-deny` is fatal: the
+/// authoritative check must run — reserved for a future with an expanded
+/// dependency allowlist.
 fn license_check(repo_root: &Path, mode: Mode) -> Result<(), GateError> {
     let deny_toml = repo_root.join("deny.toml");
     if !deny_toml.exists() {

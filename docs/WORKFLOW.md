@@ -77,10 +77,14 @@ failure at any stage prints a one-line reason, appends a `FAIL` row to
 delegator ([`src/purity.rs`](../src/purity.rs:15)) to the shared `ssi-purity`
 crate. It scans `src/ordering/` for anything that escapes stdlib: added
 dependencies, `build.rs`, FFI / `extern`, `#[no_mangle]` / `#[link]`,
-proc-macros, or `include!` reaching outside the directory. The local harness
-runs in `FallbackAllowed` mode; the grader runs the *same crate* in
-`RequireDeny` mode, so a submission that passes locally passes the server gate.
-A violation here fails the run before a single matrix is scored.
+proc-macros, or `include!` reaching outside the directory. It runs in
+`FallbackAllowed` mode — and since the grader runs this same harness binary, a
+submission that passes locally passes the server gate by construction (one
+binary, one gate). The dependency scan (allowlist of trusted crates) is the
+load-bearing license check under the current zero-dependency policy; `cargo-deny`
+(the stricter `RequireDeny` path) only adds value once third-party crates are
+allowlisted, so its absence falls back soundly to the dependency scan. A
+violation here fails the run before a single matrix is scored.
 
 ### Load the corpus
 

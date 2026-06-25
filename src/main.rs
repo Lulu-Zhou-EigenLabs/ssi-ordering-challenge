@@ -59,8 +59,10 @@ pub use ssi_scoring::Pattern;
 
 /// Per-matrix time cap, ENFORCED: order() runs in a child process that is
 /// SIGKILLed at this bound (see watchdog). 2 s is the strict end of the cost
-/// doc's 2–5 s band; it is stricter than the grader's current 5 s default, so a
-/// submission that passes locally passes the server gate.
+/// doc's 2–5 s guidance band. The grader runs THIS SAME binary (Yukon
+/// dispatches `cargo run --release` in the repo's own Actions), so the cap that
+/// gates a submission on the server is exactly this constant — local and graded
+/// runs use the identical 2 s cap by construction (Invariant 2).
 const TIME_CAP_PER_MATRIX: Duration = Duration::from_secs(2);
 
 fn main() {

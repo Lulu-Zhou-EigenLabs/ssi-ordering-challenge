@@ -95,10 +95,10 @@ fails on any matrix:
 - **Time cap.** 2 s per matrix, **enforced**: `order()` runs in a child process
   that is killed the instant it exceeds the cap, and the run FAILs with the
   offending matrix's size/density. (This is the strict end of the proposal's
-  2–5 s band and is stricter than the server's current default, so an ordering
-  that passes locally passes the server gate.) Annealing and learned orderings
-  are welcome; runaways are not — and note that cost scales with **density
-  (nnz)**, not just dimension.
+  2–5 s band. The grader runs this same harness, so the cap that gates your
+  submission on the server is exactly the cap you see locally.) Annealing and
+  learned orderings are welcome; runaways are not — and note that cost scales
+  with **density (nnz)**, not just dimension.
 - **No panics.**
 
 There are no loopholes: the input is the pattern only (no values, no
