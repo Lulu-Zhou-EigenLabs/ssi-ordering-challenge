@@ -25,7 +25,7 @@
 //! local-search refinement are the classic families (see `README.md` →
 //! "Background reading"). Record what you try in `memory/`.
 
-use crate::pattern::Pattern;
+use crate::Pattern;
 
 /// Return an elimination order for `pattern`.
 ///

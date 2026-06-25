@@ -236,7 +236,7 @@ submodules, rewrite primitives, refactor freely.
 
 You may **not** touch the harness:
 
-- `src/main.rs`, `src/pattern.rs`, `src/purity.rs` — the contract and gates.
+- `src/main.rs`, `src/corpus.rs`, `src/purity.rs` — the contract and gates.
 - `src/watchdog.rs`, `src/perm_io.rs` — the subprocess time-cap enforcement.
 - `ssi-scoring/` — the trusted scoring wrapper (also used by the grader).
 - `ssi-purity/` — the shared Stage-A purity gate (also used by the grader).

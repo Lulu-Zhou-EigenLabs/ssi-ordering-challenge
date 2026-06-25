@@ -41,9 +41,10 @@ ssi-ordering-challenge/            (THE PUBLIC REPO / contestant template)
 │   └── scripts/
 │       └── fetch-eval-corpus.sh  pulls the hidden eval corpus at run time    [frozen]
 ├── src/
-│   ├── main.rs           harness driver (gate, stages, caps, scoring, output)[frozen]
-│   ├── pattern.rs        Pattern re-export + corpus loader (JSONL); honors
-│   │                     the SSI_CORPUS_FILE path override                    [frozen]
+│   ├── main.rs           harness driver (gate, stages, caps, scoring, output);
+│   │                     re-exports the Pattern contract type as crate::Pattern[frozen]
+│   ├── corpus.rs         corpus loader (JSONL); honors the SSI_CORPUS_FILE
+│   │                     path override                                         [frozen]
 │   ├── purity.rs         local Stage-A purity & license gate                 [frozen]
 │   ├── watchdog.rs       subprocess supervision + SIGKILL at the time cap    [frozen]
 │   ├── perm_io.rs        parent↔worker permutation wire format               [frozen]
@@ -107,7 +108,7 @@ contract `Pattern`. **What ships in the repo is a small sample** (13 matrices)
 for pipeline smoke-testing; the full corpus (~279 patterns, n up to ~340k) is
 published for download (see `corpus/dev/README.md`). The corpus path defaults to
 `corpus/dev/patterns.jsonl` but is overridable per run via the `SSI_CORPUS_FILE`
-environment variable (`pattern::corpus_path`); unset or blank, the default
+environment variable (`corpus::corpus_path`); unset or blank, the default
 holds, so the override is invisible to contestants who don't use it. The grader
 sets it to the downloaded eval corpus at a temp path outside the repo tree, so
 the eval bytes are never committed; it scores a disjoint, hidden evaluation

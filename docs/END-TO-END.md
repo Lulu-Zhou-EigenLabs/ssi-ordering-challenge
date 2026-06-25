@@ -33,7 +33,7 @@ objective) is what makes the whole search space safe to expose. See
 | Component | Path | Role | Trust |
 |---|---|---|---|
 | **Submission** | `src/ordering/` | the contestant's `order(&Pattern) -> Vec<usize>` — the ONLY editable directory | untrusted |
-| **Harness** | `src/main.rs`, `src/pattern.rs`, `src/purity.rs` | runs `order()`, gates it, validates, scores, writes output | trusted |
+| **Harness** | `src/main.rs`, `src/corpus.rs`, `src/purity.rs` | runs `order()`, gates it, validates, scores, writes output | trusted |
 | **Scoring wrapper** | `ssi-scoring/` | the ONE code path that calls feral: the reader, the scorer, the AMD baseline | trusted |
 | **Purity gate** | `ssi-purity/` | the Stage-A scan (shared with the grader) | trusted |
 | **Dev corpus** | `corpus/dev/patterns.jsonl` | the input matrices (a small in-repo sample) | public data |
@@ -138,7 +138,7 @@ partial credit):
 | Stage | What happens | Code |
 |---|---|---|
 | **A — purity & license** | scan `src/ordering/` for non-stdlib escapes (added deps, `build.rs`, FFI, `#[no_mangle]`/`#[link]`, proc-macros, `include!` escapes) | `src/purity.rs` → `ssi-purity` |
-| **load corpus** | read every line of `corpus/dev/patterns.jsonl` into `(raw_index, name, Pattern)` | `pattern::dev_corpus_indexed()` (`src/pattern.rs`) |
+| **load corpus** | read every line of the corpus file into `(raw_index, name, Pattern)` | `corpus::corpus_indexed()` (`src/corpus.rs`) |
 | **B — run order()** | run `order()` **twice** in a killable child process, timed against a 2 s/matrix cap; a panic or cap breach fails the run | `src/main.rs` (`run_once`) |
 | **C — validate** | the returned permutation must be a true bijection of `0..n` | `validate_permutation` (`src/main.rs`) |
 | **E — determinism** | the two `order()` runs must return byte-identical permutations | `src/main.rs` (`perm1 != perm2`) |

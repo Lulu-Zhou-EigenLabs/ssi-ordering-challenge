@@ -35,8 +35,8 @@
 //! purity/license failure makes the whole run FAIL — no partial credit, no
 //! silent fallback.
 
+mod corpus;
 mod ordering;
-mod pattern;
 mod perm_io;
 mod purity;
 mod watchdog;
@@ -47,7 +47,15 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use ssi_scoring::{score, Pattern};
+use ssi_scoring::score;
+
+// Re-export the contract type at the crate root so contestant code under
+// src/ordering/ imports it as `crate::Pattern`. The type is defined in
+// ssi_scoring (the one scoring path, Invariant 2); this is a pure alias, so a
+// local `Pattern` is the identical type the grader scores. Naming the crate's
+// defining type at its root is idiomatic Rust and keeps the import path honest
+// (no module-name clutter, no second file named pattern.rs).
+pub use ssi_scoring::Pattern;
 
 /// Per-matrix time cap, ENFORCED: order() runs in a child process that is
 /// SIGKILLed at this bound (see watchdog). 2 s is the strict end of the cost
@@ -74,8 +82,8 @@ fn main() {
         std::process::exit(1);
     }
 
-    let corpus_file = pattern::corpus_path();
-    let corpus = pattern::dev_corpus_indexed();
+    let corpus_file = corpus::corpus_path();
+    let corpus = corpus::corpus_indexed();
     if corpus.is_empty() {
         println!(
             "RUN FAILED: no patterns found at {}. Run from the repo root.",

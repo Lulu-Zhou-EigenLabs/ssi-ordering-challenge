@@ -47,7 +47,8 @@ contract `Pattern`.
 
 The type your `order()` receives is `Pattern`
 ([`ssi-scoring/src/pattern.rs`](../ssi-scoring/src/pattern.rs:23)), re-exported
-through `src/pattern.rs` so the signature is identical on both sides:
+at the harness crate root (as `crate::Pattern`, in `src/main.rs`) so the
+signature is identical on both sides:
 
 ```rust
 pub struct Pattern {
@@ -83,9 +84,9 @@ A violation here fails the run before a single matrix is scored.
 
 ### Load the corpus
 
-[`src/main.rs`](../src/main.rs) calls `pattern::dev_corpus_indexed()`
-([`src/pattern.rs`](../src/pattern.rs)), which loads every pattern in
-`corpus/dev/patterns.jsonl` in file order via the shared
+[`src/main.rs`](../src/main.rs) calls `corpus::corpus_indexed()`
+([`src/corpus.rs`](../src/corpus.rs)), which loads every pattern in
+the corpus file in file order via the shared
 `ssi_scoring::load_corpus_jsonl` reader, tagging each with its 0-based raw line
 index so the parent can hand the worker subprocess the exact line to load. An
 empty or missing corpus aborts the run (run from the repo root).
