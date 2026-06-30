@@ -28,9 +28,13 @@ AMD's cost profile as the bar any expensive candidate path must not exceed.
   nested dissection beats a purely greedy local heuristic.
 
 ## Status in `src/ordering/`
-Not the contestant's code — AMD is the harness baseline (`feral_amd::amd_order`)
-that every run is scored against. Documented here as the reference profile to
-beat.
+**Implemented** — `src/ordering/amd.rs` is a stdlib-only quotient-graph AMD port
+(cs_amd style), wired in via `mod.rs::order()`. It is also the harness baseline
+(`feral_amd::amd_order`, a different AMD variant) that every run is scored
+against, so our score sits at the AMD-vs-AMD ceiling: **0.9992** on the dev
+corpus (see [0001](../experiments/0001-amd-quotient-graph.md)). There is no
+headroom against AMD by doing AMD — beating 1.00 needs a different family
+(nested dissection) on the structured/grid-like matrices.
 
 ## Links
 - Literature: _(add Amestoy-Davis-Duff 1996 note)_

@@ -8,29 +8,27 @@
 //! only — no added dependencies, no FFI, no build scripts (the purity gate
 //! enforces this).
 //!
-//! ## This is a STARTER STUB
+//! ## Current approach: AMD (Approximate Minimum Degree)
 //!
-//! The shipped `order()` returns the **identity / natural order** (eliminate
-//! variables in their given order). It is valid and deterministic, but it is a
-//! deliberately trivial baseline — on real KKT patterns it eliminates dense
-//! constraint rows early and densifies the factor, so it scores *far worse*
-//! than the AMD baseline (score ≫ 1.00). Your job is to replace it.
+//! `order()` runs the quotient-graph AMD heuristic in [`amd`] — the same family
+//! as the harness baseline. It greedily eliminates the (approximate-)minimum-
+//! degree variable, representing elimination cliques as compact "elements" so
+//! degree updates stay near-linear and the 2 s cap holds even on the dense KKT
+//! rows. See `memory/techniques/amd.md` for where it wins and loses, and
+//! `memory/` for what to try next (nested dissection is the open headroom).
 //!
-//! You may rewrite this file completely, split it into submodules, and add
-//! helpers — anything under `src/ordering/` is yours, as long as `order()`
-//! keeps its signature and the constraints above. Cost scales with **density
-//! (nnz, max-degree)**, not just `n`, so gate any expensive path by both.
-//!
-//! Where to start: minimum-degree / AMD, nested dissection, minimum-fill, and
-//! local-search refinement are the classic families (see `README.md` →
-//! "Background reading"). Record what you try in `memory/`.
+//! Everything under `src/ordering/` is yours: split it, add submodules, swap the
+//! algorithm — as long as `order()` keeps its signature, stays deterministic,
+//! and uses only the standard library.
+
+mod amd;
 
 use crate::Pattern;
 
 /// Return an elimination order for `pattern`.
 ///
-/// STARTER STUB: the identity permutation `[0, 1, ..., n-1]`. Replace this with
-/// a real fill-reducing ordering.
+/// Delegates to the stdlib AMD implementation in [`amd::order`]. The result is a
+/// bijection of `0..pattern.n`; an empty pattern yields an empty permutation.
 pub fn order(pattern: &Pattern) -> Vec<usize> {
     // TEST-ONLY hook: when SSI_TEST_SLEEP_MS is set, sleep that long before
     // ordering. Inert unless the env var is present (never set in normal runs
@@ -42,16 +40,25 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
         }
     }
 
-    // Identity order: eliminate 0, 1, 2, ... in the matrix's given order.
-    (0..pattern.n).collect()
+    amd::order(pattern)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The starter `order()` must satisfy the contract the harness enforces:
-    /// a bijection of `0..n`. (It is deliberately not a *good* ordering.)
+    /// Assert `perm` is a bijection of `0..n`.
+    fn assert_bijection(perm: &[usize], n: usize) {
+        assert_eq!(perm.len(), n, "permutation length");
+        let mut seen = vec![false; n];
+        for &v in perm {
+            assert!(v < n && !seen[v], "not a bijection of 0..{n}");
+            seen[v] = true;
+        }
+    }
+
+    /// `order()` must satisfy the contract the harness enforces: a bijection of
+    /// `0..n` on a non-trivial graph.
     #[test]
     fn order_is_a_valid_bijection() {
         let n = 60;
@@ -64,13 +71,7 @@ mod tests {
             edges.push((v, v + 8));
         }
         let pat = Pattern::from_edges(n, &edges);
-        let perm = order(&pat);
-        assert_eq!(perm.len(), n);
-        let mut seen = vec![false; n];
-        for &v in &perm {
-            assert!(v < n && !seen[v], "not a bijection of 0..{n}");
-            seen[v] = true;
-        }
+        assert_bijection(&order(&pat), n);
     }
 
     /// An empty pattern yields an empty permutation (no panic on n = 0).
@@ -78,5 +79,85 @@ mod tests {
     fn order_handles_empty() {
         let pat = Pattern::from_edges(0, &[]);
         assert!(order(&pat).is_empty());
+    }
+
+    /// A single node with no edges — degree-0 fast path.
+    #[test]
+    fn order_handles_singleton() {
+        let pat = Pattern::from_edges(1, &[]);
+        assert_eq!(order(&pat), vec![0]);
+    }
+
+    /// A fully disconnected graph: every node has degree 0, all eliminated by
+    /// the empty-node fast path. Order is the natural one and a valid bijection.
+    #[test]
+    fn order_handles_no_edges() {
+        let n = 10;
+        let pat = Pattern::from_edges(n, &[]);
+        assert_bijection(&order(&pat), n);
+    }
+
+    /// Arrow matrix: a hub (node 0) connected to every other node, plus a path
+    /// among the rest. AMD must eliminate the hub LAST — eliminating it first
+    /// turns the whole factor dense. We assert the hub is in the final position.
+    #[test]
+    fn arrow_eliminates_hub_last() {
+        let n = 40;
+        let mut edges = Vec::new();
+        for v in 1..n {
+            edges.push((0, v)); // hub
+        }
+        for v in 1..n - 1 {
+            edges.push((v, v + 1)); // path among the spokes
+        }
+        let pat = Pattern::from_edges(n, &edges);
+        let perm = order(&pat);
+        assert_bijection(&perm, n);
+        assert_eq!(*perm.last().unwrap(), 0, "hub (node 0) must be eliminated last");
+    }
+
+    /// A tridiagonal matrix already has zero fill under natural order; AMD must
+    /// not make it worse and must return a valid bijection.
+    #[test]
+    fn tridiagonal_is_valid() {
+        let n = 100;
+        let edges: Vec<(usize, usize)> = (0..n - 1).map(|v| (v, v + 1)).collect();
+        let pat = Pattern::from_edges(n, &edges);
+        assert_bijection(&order(&pat), n);
+    }
+
+    /// Determinism gate (Stage E analog): two runs on the same pattern must
+    /// return byte-identical output.
+    #[test]
+    fn order_is_deterministic() {
+        let n = 200;
+        let mut edges = Vec::new();
+        for v in 0..n - 1 {
+            edges.push((v, v + 1));
+        }
+        for v in 0..n - 13 {
+            edges.push((v, v + 13));
+        }
+        let pat = Pattern::from_edges(n, &edges);
+        assert_eq!(order(&pat), order(&pat));
+    }
+
+    /// Two disjoint cliques: each block is dense, but there is no fill *between*
+    /// blocks. AMD must produce a valid bijection (and never bridge the blocks).
+    #[test]
+    fn disjoint_cliques_valid() {
+        let mut edges = Vec::new();
+        for a in 0..6 {
+            for b in (a + 1)..6 {
+                edges.push((a, b));
+            }
+        }
+        for a in 6..12 {
+            for b in (a + 1)..12 {
+                edges.push((a, b));
+            }
+        }
+        let pat = Pattern::from_edges(12, &edges);
+        assert_bijection(&order(&pat), 12);
     }
 }
