@@ -158,15 +158,19 @@ pipeline smoke-testing, not for ranking your idea — measure on the full corpus
 
 ## How to play
 
-### Quick start (with Claude Code)
+### Quick start (with an agent)
 
-This repo ships ready for an agent to work in. `CLAUDE.md` (the working loop
-and constraints) and `.claude/settings.json` are already in place. The settings
-run in `dontAsk` mode with permissions scoped so the agent can edit
-`src/ordering/`, build, run, test, and commit **without prompting** — but is
-blocked from touching the harness, `ssi-scoring/`, `ssi-purity/`, `Cargo.toml`,
-and the tests. That scoping is what lets Claude run the benchmark loop on its
-own.
+The rules for working in this repo live in [`RULES.md`](RULES.md) — the working
+loop, the constraints, and the knowledge-base discipline, written to be followed
+by hand or by any coding agent. It does not assume a particular editor or tool.
+
+If you drive the repo with a coding agent, point it at that file (e.g. "read and
+follow `RULES.md`"). The rules say to edit only `src/ordering/`, build, run,
+test, and commit — and to leave the harness, `ssi-scoring/`, `ssi-purity/`,
+`Cargo.toml`, and the tests alone (the grader rebuilds those from its own copy
+regardless). If your tool supports scoped permissions or an allowlist, scoping
+edits to `src/ordering/` plus `cargo`/`git` is a convenient way to let it run
+the loop unattended.
 
 > **Before you start: download the full dev corpus.** The
 > `corpus/dev/patterns.jsonl` in this repo is only a tiny smoke-test sample —
@@ -178,22 +182,21 @@ own.
 > "The corpus: in-repo sample vs. full download" above and `corpus/dev/README.md`
 > for the exact commands.
 
-Launch Claude Code from the repo root and let it iterate:
+A headless run from the repo root looks like this (Claude Code shown; adapt the
+command to your agent):
 
 ```sh
-claude -p --verbose "Read CLAUDE.md, study the current src/ordering/ and its memory/ notes, then improve on the best score so far. Repeat the build/run/score loop until you beat it, committing each improvement."
+claude -p --verbose "Read RULES.md, study the current src/ordering/ and its memory/ notes, then improve on the best score so far. Repeat the build/run/score loop until you beat it, committing each improvement."
 ```
 
-The `-p` flag runs Claude headless: it executes the prompt to completion and
-exits, with no interactive turns to wait on. `--verbose` streams each step
-(tool calls, runs, commits) to the terminal as it goes, instead of printing
-only the final result.
+The `-p` flag runs the agent headless: it executes the prompt to completion and
+exits, with no interactive turns to wait on. `--verbose` streams each step (tool
+calls, runs, commits) to the terminal as it goes, instead of printing only the
+final result.
 
-Claude auto-loads `CLAUDE.md` and the permission settings, so it runs the loop
-end to end without stopping to ask. The competition backend pushes any
-submission that passes the grader with a better score back to the repo as the
-new best, so each run starts from the leading ordering and its
-`src/ordering/memory/` notes rather than from scratch.
+The competition backend pushes any submission that passes the grader with a
+better score back to the repo as the new best, so each run starts from the
+leading ordering and its `src/ordering/memory/` notes rather than from scratch.
 
 ### Running the harness yourself
 
@@ -249,8 +252,8 @@ outside the directory, and any added crate dependency.
 
 ### How the agent works: the loop and the knowledge base
 
-This repo is built to be driven by an agent (see `CLAUDE.md`, which the agent
-reads on launch) running a tight loop: read what's known → form a hypothesis →
+This repo is built to be driven by an agent (see [`RULES.md`](RULES.md), which
+describes the loop) running a tight cycle: read what's known → form a hypothesis →
 edit `src/ordering/` → `cargo run --release` → read the per-matrix table and
 attribute wins/losses by family and size → record the result → commit if the
 score improved.
