@@ -63,14 +63,24 @@ The purity gate is a **convenience layer** that rejects obviously-invalid submis
 
 ## Threat coverage table
 
+> **Note:** the "Defense layer" column reflects the *implemented* design, which
+> deviates from the original plan for the FFI/build rows — see the Task 6 and
+> Task 7 follow-up records below for why. The submission's own source
+> (`src/ordering/`) is still scanned strictly (`purity_scan`); the dependency
+> *tree* is not source-token-scanned (unsound), and the "no foreign code"
+> guarantee rests on frozen-registry sourcing + the offline vendored build +
+> the no-network scored run, not a custom no-C-compiler image.
+
 | Threat | Defense layer |
 |--------|---------------|
-| Import a closed-source or GPL crate | License filter (`cargo-deny` at gate; vendored-only build at sandbox) |
-| Link a precompiled native blob | FFI scan (gate) + `*-sys` crate ban (gate) + no-linker-for-foreign-libs build (sandbox) |
-| Compile C code in `build.rs` | FFI scan (gate) + no-C-compiler build (sandbox) |
-| Call a hosted ML model or external oracle at runtime | No-network sandbox (Stage B) |
-| Exfiltrate the eval corpus via network | No-network sandbox (Stage B) |
-| Read precomputed permutations from disk | No-filesystem-reads sandbox (Stage B) + held-out eval corpus (Stage A/D) |
+| Import a closed-source program (source never published) | **Fully prevented:** crates.io-only sources (`deny.toml`, no git/path) + offline vendored `--locked` build + no-network run — everything compiled comes from the frozen registry, whose source is public; nothing is fetched at build or run time |
+| Import a GPL/AGPL/proprietary-licensed crate | License filter (`cargo-deny` licenses check, RequireDeny) over the whole resolved tree |
+| Ship/link a precompiled native blob | Prebuilt-artifact ban + `*-sys` crate ban (`scan_vendored_tree`, gate) |
+| Declare native compilation (`*-sys`, `links`, `cc`/`cmake`/`bindgen` build-dep) | `scan_vendored_tree` hard-rejects the declared forms (gate) |
+| Undeclared C compile (a `build.rs` shelling out to `cc` on hidden/obfuscated C) | **Accepted residual (low value for an ordering competition):** any such C is boxed by the no-network run, held-out corpus, recomputed score, and determinism re-runs; it cannot exfiltrate or reach an oracle. NOT closed by a no-cc image (option A; see Task 7 record) |
+| Call a hosted ML model or external oracle at runtime | No-network scored run (Task 9) |
+| Exfiltrate the eval corpus via network | No-network scored run (Task 9) |
+| Read precomputed permutations from disk | Held-out eval corpus (Stage A/D) + sandboxed run |
 | Embed large precomputed lookup table in binary | Memory cap (Stage B) + held-out corpus (Stage A/D) |
 | Nondeterministic output (from ASLR, timing, uninit memory) | Determinism re-runs (Stage E, R=3) |
 | Cfg-gated or macro-generated FFI that evades static scan | No-C-compiler + no-foreign-linker build (sandbox, Stage B) |
@@ -149,3 +159,13 @@ scoring-unchanged verification above; the frozen contract's score is unaffected.
 
 ### Task 6: Build wiring — vendoring + transitive tree scan
 Task 6 wired `cargo vendor` + `scan_vendored_tree` into `prepare-build.sh`. The empty-deps case (feral closure only) passes the transitive scan. The `openssl-sys` bad-dep test (with a freshly cleaned vendor directory) was caught by the **transitive tree scan layer** (`scan-tree` binary calling `scan_vendored_tree`) before any build: the scan rejected `vcpkg` (a transitive dependency of `openssl-sys`) for shipping a prebuilt native artifact (`vendor/vcpkg/test-data/no-status/installed/x64-windows/lib/zlib.lib`). Exit code: 1. The `*-sys` name check would also have caught `openssl-sys` itself, but the artifact check fired first. `git rm --cached Cargo.toml` was executed to untrack the now-generated manifest.
+
+### Task 7: Build environment — chose the offline model over a custom no-C-compiler image (deviation)
+The plan's Task 7 built a custom no-C-compiler Docker image (`grader/Dockerfile`) with a `rust-lld` linker pin, pushed to GHCR, to make C compilation *physically impossible*. During implementation two facts changed the calculus:
+
+1. **The stock `rust:1-slim-bookworm` base image ships a C compiler** (`cc`/`gcc` present). A true no-cc image therefore requires *actively stripping* the compiler and guarding against its reintroduction on every base-image update — fragile, maintenance-prone infrastructure.
+2. **The threat the no-cc image uniquely closes is narrow and low-value here.** Closed-source injection (code never published) is *already* fully prevented by crates.io-only sourcing + the offline vendored build + the no-network run — none of which need a custom image. The *only* residual the no-cc image adds over that is an *undeclared* `build.rs` shelling out to `cc` on hidden/obfuscated C (the declared forms — `*-sys`/`links`/`cc` build-dep — are already rejected by `scan_vendored_tree`). For a fill-reducing ordering competition, such boxed C is low-value: the no-network run, held-out corpus, recomputed score, and determinism re-runs leave it nothing to exfiltrate or exploit.
+
+**Decision (option A):** do NOT ship a custom no-cc image or a `rust-lld` pin. The `benchmark.yml` job runs on the stock `ubuntu-latest` runner and: installs `cargo-deny`, runs `prepare-build.sh` (the one network step, for `cargo vendor`), then builds and scores with `cargo … --release --offline --locked`. The "no foreign code enters" guarantee rests on: crates.io-only sources (`deny.toml`), the offline vendored `--locked` build, the `scan_vendored_tree` native-signal gate, and the no-network scored run (Task 9). The undeclared-C residual is an accepted, documented low-value risk. The `.cargo/config.base.toml` linker pin was reverted; no `grader/Dockerfile` was added.
+
+Verified locally: `prepare-build.sh` → "scanned clean"; `cargo run --release --offline --locked` scores `1.0000` (empty-deps case) with no network.
