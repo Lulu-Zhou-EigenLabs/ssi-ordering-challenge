@@ -31,3 +31,17 @@ if [ -n "$GEN" ]; then
 fi
 awk 'f; /=== GENERATED DEPS BELOW/ {f=1}' "$TEMPLATE" >> "$OUT"
 echo "prepare-build: wrote $OUT"
+
+# Freeze exact dependency versions, then vendor the full transitive tree. This
+# step needs network (to fetch declared crates); the later build is offline.
+CARGO_NET_OFFLINE=false cargo generate-lockfile
+mkdir -p .cargo
+CARGO_NET_OFFLINE=false cargo vendor vendor > .cargo/vendor-source.toml
+cat .cargo/config.base.toml .cargo/vendor-source.toml > .cargo/config.toml
+
+# Scan the vendored tree for native/FFI escapes BEFORE any build.
+cargo run --quiet -p ssi-purity --bin scan-tree -- vendor || {
+  echo "prepare-build: vendored dependency tree failed the FFI/native scan" >&2
+  exit 1
+}
+echo "prepare-build: vendored tree scanned clean"
