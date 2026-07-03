@@ -169,3 +169,17 @@ The plan's Task 7 built a custom no-C-compiler Docker image (`grader/Dockerfile`
 **Decision (option A):** do NOT ship a custom no-cc image or a `rust-lld` pin. The `benchmark.yml` job runs on the stock `ubuntu-latest` runner and: installs `cargo-deny`, runs `prepare-build.sh` (the one network step, for `cargo vendor`), then builds and scores with `cargo … --release --offline --locked`. The "no foreign code enters" guarantee rests on: crates.io-only sources (`deny.toml`), the offline vendored `--locked` build, the `scan_vendored_tree` native-signal gate, and the no-network scored run (Task 9). The undeclared-C residual is an accepted, documented low-value risk. The `.cargo/config.base.toml` linker pin was reverted; no `grader/Dockerfile` was added.
 
 Verified locally: `prepare-build.sh` → "scanned clean"; `cargo run --release --offline --locked` scores `1.0000` (empty-deps case) with no network.
+
+### Task 9: Runtime no-network isolation of the scored run
+The scored run is the layer that stops an untrusted submission's `order()` from calling a hosted model or exfiltrating the eval corpus at runtime — load-bearing now that Task 7 chose the offline model over a no-cc image.
+
+**Mechanism (chosen after testing three):** run the scored step in a fresh network namespace via `sudo --preserve-env=SSI_CORPUS_FILE unshare -n -- bash -c '…; exec cargo run --release --offline --locked'`. This isolates ONLY the scored process (loopback only, no routes), leaving the runner agent's control-plane connection to GitHub intact — unlike the plan's original `iptables -P OUTPUT DROP`, which mutates the whole runner's firewall and can sever the agent unless an `ESTABLISHED,RELATED` allow rule is added. GitHub-hosted Ubuntu runners provide passwordless `sudo`, so `unshare -n` has the privilege it needs; if a future runner lacks it, the step fails LOUDLY (no silent un-isolated scoring). A `docker run --network=none` inner container was considered (most portable) but rejected as heavier and re-introducing the container Task 7 removed.
+
+`.github/scripts/assert-no-network.sh` is a best-effort, **non-gating** sanity check: inside the namespace it attempts an outbound TCP connection and prints a `::warning::` if it unexpectedly succeeds; it never affects the score.
+
+**Verified in a Linux container matching the runner (`--cap-add=SYS_ADMIN` to mimic the runner's root/sudo):**
+- Inside `unshare -n`, an outbound `/dev/tcp` connection is BLOCKED (`assert-no-network` reports "isolation looks effective"); local file/CPU work succeeds.
+- **Critically, the RequireDeny gate (Task 8) runs offline inside the namespace:** `cargo deny check licenses` returns exit 0 / "licenses ok" with no network — so Task 8 and Task 9 do NOT collide (the gate does not need network to check licenses against the frozen lockfile).
+- The scored harness runs offline against the on-disk corpus and produces the score.
+
+This confirms the Task-7 → Task-9 dependency the earlier record flagged: the no-network scored run is real and it is the backstop the offline-model decision leans on.
