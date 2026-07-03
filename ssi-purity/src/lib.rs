@@ -31,6 +31,9 @@ impl std::fmt::Display for GateError {
     }
 }
 
+mod deps;
+pub use deps::{parse_deps_toml, DeclaredDep};
+
 /// Run the full Stage-A gate from the repo root.
 pub fn check(repo_root: &Path, mode: Mode) -> Result<(), GateError> {
     purity_scan(&repo_root.join("src/ordering"))?;
