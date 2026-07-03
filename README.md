@@ -46,10 +46,15 @@ You are given a Rust harness that, for each matrix in a development corpus
 (real KKT / saddle-point patterns harvested from interior-point solves —
 `corpus/dev/patterns.jsonl`), does the following:
 
-0. **Gates** your submission with a local **purity & license check** (a subset
-   of the production grader's Stage A): `src/ordering/` must be stdlib-only,
-   with no build scripts, FFI, proc-macros, or extra dependencies, and the
-   dependency licenses must be permissive (checked with `cargo-deny`).
+0. **Gates** your submission with a local **purity & license check** (the same
+   Stage A the production grader runs): `src/ordering/` must be pure Rust — no
+   build scripts, FFI, `#[no_mangle]`/`#[link]`, proc-macros, or `include!`
+   outside the directory. You MAY depend on permissive, pure-Rust crates by
+   declaring them in `src/ordering/deps.toml` (see "Using crates" below); every
+   dependency and its whole transitive tree must be permissively licensed
+   (checked with `cargo-deny`, which must be installed) and contain no native
+   code (`*-sys`, a `links`/`cc` build that compiles C, or a shipped blob are
+   rejected).
 1. **Runs** feral's AMD baseline ordering and scores it.
 2. **Calls** your `ordering::order(&Pattern) -> Vec<usize>` — *twice*. Both
    runs must return identical permutations (determinism gate) within the
@@ -89,7 +94,9 @@ matrix values), so the anchor reproduces exactly from a pattern file.
 A run is rejected — not scored worse, *rejected* — if any of the following
 fails on any matrix:
 
-- **Purity/license.** `src/ordering/` must be stdlib-only and license-clean.
+- **Purity/license.** `src/ordering/` must be pure Rust (no FFI/build scripts);
+  any crates declared in `deps.toml` and their whole tree must be pure Rust and
+  permissively licensed.
 - **Bijection.** The permutation must contain each of `0..n` exactly once.
 - **Determinism.** Two runs on the same pattern must agree exactly.
 - **Time cap.** 2 s per matrix, **enforced**: `order()` runs in a child process
@@ -132,7 +139,8 @@ distribution either by replacing `corpus/dev/patterns.jsonl`, or — without
 touching the in-repo file — by pointing the harness at the download:
 
 ```sh
-SSI_CORPUS_FILE=$PWD/patterns.jsonl cargo run --release -- --note "full corpus"
+# (run `bash scripts/prepare-build.sh` first if you haven't this session)
+SSI_CORPUS_FILE=$PWD/patterns.jsonl cargo run --release --offline --locked -- --note "full corpus"
 ```
 
 `SSI_CORPUS_FILE` overrides the corpus path for one run; unset (the default), the
@@ -201,10 +209,18 @@ leading ordering and its `src/ordering/memory/` notes rather than from scratch.
 ### Running the harness yourself
 
 ```sh
-cargo run --release -- --note "what I tried"
+bash scripts/prepare-build.sh            # regenerate Cargo.toml from deps.toml + vendor + scan
+cargo run --release --offline --locked -- --note "what I tried"
 ```
 
-That single command runs the purity/license gate, scores every dev matrix,
+`prepare-build.sh` validates `src/ordering/deps.toml`, regenerates the trusted
+`Cargo.toml` from `Cargo.toml.in` + your declared crates, vendors the full
+dependency tree, and scans it for native-code signals (`*-sys` names, prebuilt
+blobs, C-toolchain build-deps). Run it whenever you change `deps.toml` (and once
+on a fresh clone). If your `deps.toml` is empty you can skip it and just
+`cargo run --release`.
+
+The scored command runs the purity/license gate, scores every dev matrix,
 writes `score.json`, and appends one row to `results.tsv` with timestamp,
 status, score, fill ratio, and your note. It grades `corpus/dev/patterns.jsonl`
 by default; set `SSI_CORPUS_FILE=/path/to/patterns.jsonl` to grade a corpus at
@@ -215,15 +231,45 @@ tests, the scorer cross-check against an independent oracle, the narrow-input
 property, and the exact-equivalence pins on the committed sample) — useful for
 verifying your toolchain before iterating.
 
+> **`cargo-deny` is required.** The gate runs the authoritative `cargo-deny`
+> license check (RequireDeny mode) — install it once with
+> `cargo install cargo-deny`. A missing `cargo-deny` fails the gate rather than
+> skipping it, so your local result matches the grader.
+
+### Using crates
+
+You may depend on permissive, **pure-Rust** crates. Declare them in
+`src/ordering/deps.toml` — a restricted TOML file with a single `[dependencies]`
+table of exact-version entries:
+
+```toml
+[dependencies]
+rand = "0.8.5"
+petgraph = "0.6.4"
+```
+
+Only `name = "x.y.z"` is accepted: no `git`/`path`/`features` keys, no version
+ranges or `*`, no other sections. Every declared crate **and its whole
+transitive tree** must come from crates.io, be permissively licensed (MIT /
+Apache-2.0 / BSD / Unlicense / Zlib / Unicode-3.0), and be pure Rust — a `*-sys`
+wrapper, a crate that compiles C (a `cc`/`cmake`/`bindgen` build-dependency or a
+`links` native library), or one shipping a prebuilt binary blob is rejected.
+After editing `deps.toml`, run `bash scripts/prepare-build.sh` before `cargo
+run`. See [`docs/DECISION-crate-policy.md`](docs/DECISION-crate-policy.md) for
+the full policy and its rationale.
+
 ### Building from a fresh clone
 
-The scoring wrapper (`ssi-scoring/`) depends on feral via a **pinned git rev** of
-`github.com/jkitchin/feral`, so a fresh clone builds with no local feral checkout
-— `cargo build --release` fetches the exact pinned feral once and caches it. The
-first build needs network access; subsequent builds are offline.
+The scoring wrapper (`ssi-scoring/`) depends on feral via **exact crates.io
+releases** (`feral = "=0.11.0"` and companions), so a fresh clone builds with no
+local feral checkout. `prepare-build.sh` fetches and vendors everything once
+(needs network); the subsequent `cargo build/run --offline --locked` needs no
+network. The scoring API and your `order()` contract are unchanged.
 
-The scoring API and your `order()` contract are unchanged regardless of how feral
-is sourced.
+> **Generated `Cargo.toml`.** The committed source of truth is `Cargo.toml.in`;
+> `prepare-build.sh` generates `Cargo.toml` (git-ignored) from it plus your
+> `deps.toml`. Don't edit `Cargo.toml` by hand — edit `deps.toml` and re-run the
+> script.
 
 ### What you can edit
 
@@ -237,18 +283,25 @@ submodules, rewrite primitives, refactor freely.
 > point: it is your starting line. Replace it wholesale; the only fixed thing is
 > the `order()` signature, and everything else under `src/ordering/` is yours.
 
+You may also declare crates in **`src/ordering/deps.toml`** (see "Using crates").
+That is the one file outside your algorithm code you may edit — the grader reads
+only `src/ordering/` (including its `deps.toml`) from your fork.
+
 You may **not** touch the harness:
 
 - `src/main.rs`, `src/corpus.rs`, `src/purity.rs` — the contract and gates.
 - `src/watchdog.rs`, `src/perm_io.rs` — the subprocess time-cap enforcement.
 - `ssi-scoring/` — the trusted scoring wrapper (also used by the grader).
 - `ssi-purity/` — the shared Stage-A purity gate (also used by the grader).
-- `Cargo.toml` / `deny.toml` — dependency and license policy.
+- `Cargo.toml.in` / `deny.toml` — the trusted manifest template and license
+  policy. (`Cargo.toml` is generated from `Cargo.toml.in` + your `deps.toml`;
+  don't edit it by hand.)
 - `results.tsv` directly (the harness appends to it for you).
 
-The purity gate enforces these mechanically for `src/ordering/`: it rejects
-build scripts, FFI/`extern`, `#[no_mangle]`/`#[link]`, proc-macros, `include!`
-outside the directory, and any added crate dependency.
+The purity gate enforces this mechanically for `src/ordering/`: it rejects
+build scripts, FFI/`extern`, `#[no_mangle]`/`#[link]`, proc-macros, and
+`include!` outside the directory. Declared dependencies are additionally scanned
+across their whole transitive tree for native code and non-permissive licenses.
 
 ### How the agent works: the loop and the knowledge base
 

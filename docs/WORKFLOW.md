@@ -6,13 +6,16 @@ scoring wrapper, and back out to the files on disk. Where `HARNESS-DESIGN.md`
 explains *why* the pieces exist, this explains *how the bytes flow* and points
 at the exact code for each step.
 
-The whole flow is driven by one command:
+The whole flow is driven by two commands — regenerate the manifest from
+`deps.toml` (validate → vendor → scan), then run the scored harness offline:
 
 ```
-cargo run --release -- --note "what I tried"
+bash scripts/prepare-build.sh
+cargo run --release --offline --locked -- --note "what I tried"
 ```
 
-which runs `fn main()` in [`src/main.rs`](../src/main.rs).
+`prepare-build.sh` must run once on a fresh clone and whenever `src/ordering/deps.toml`
+changes; the second command runs `fn main()` in [`src/main.rs`](../src/main.rs).
 
 ---
 
@@ -74,17 +77,18 @@ failure at any stage prints a one-line reason, appends a `FAIL` row to
 ### Stage A — purity & license gate (before any scoring)
 
 [`src/main.rs`](../src/main.rs) calls `purity::check(&repo_root)`, a thin
-delegator ([`src/purity.rs`](../src/purity.rs:15)) to the shared `ssi-purity`
-crate. It scans `src/ordering/` for anything that escapes stdlib: added
-dependencies, `build.rs`, FFI / `extern`, `#[no_mangle]` / `#[link]`,
-proc-macros, or `include!` reaching outside the directory. It runs in
-`FallbackAllowed` mode — and since the grader runs this same harness binary, a
+delegator ([`src/purity.rs`](../src/purity.rs)) to the shared `ssi-purity`
+crate. It scans `src/ordering/` for foreign-code escapes — `build.rs`, FFI /
+`extern`, `#[no_mangle]` / `#[link]`, proc-macros, or `include!` reaching
+outside the directory — parses `src/ordering/deps.toml` (the declared crates),
+and runs `cargo-deny` in `RequireDeny` mode: `cargo-deny` is **mandatory** (a
+missing one fails the gate), because with third-party crates allowed the license
+check is load-bearing. Since the grader runs this same harness binary, a
 submission that passes locally passes the server gate by construction (one
-binary, one gate). The dependency scan (allowlist of trusted crates) is the
-load-bearing license check under the current zero-dependency policy; `cargo-deny`
-(the stricter `RequireDeny` path) only adds value once third-party crates are
-allowlisted, so its absence falls back soundly to the dependency scan. A
-violation here fails the run before a single matrix is scored.
+binary, one gate). The grader additionally scans the vendored dependency tree
+(`ssi_purity::scan_vendored_tree`) for `*-sys`/`links`/C-build-deps/prebuilt
+blobs after `cargo vendor`. A violation here fails the run before a single
+matrix is scored.
 
 ### Load the corpus
 

@@ -125,10 +125,11 @@ optimization problem to a single score:
 
 ## 4. The run: input → gates → score
 
-Driven by one command:
+Driven by (regenerate the manifest from `deps.toml` first, then run):
 
 ```sh
-cargo run --release -- --note "what I tried"
+bash scripts/prepare-build.sh                       # validate deps.toml → vendor → scan tree
+cargo run --release --offline --locked -- --note "what I tried"
 ```
 
 which runs `fn main()` (`src/main.rs`). It executes the production grader's
@@ -137,7 +138,7 @@ partial credit):
 
 | Stage | What happens | Code |
 |---|---|---|
-| **A — purity & license** | scan `src/ordering/` for non-stdlib escapes (added deps, `build.rs`, FFI, `#[no_mangle]`/`#[link]`, proc-macros, `include!` escapes) | `src/purity.rs` → `ssi-purity` |
+| **A — purity & license** | scan `src/ordering/` for foreign-code escapes (`build.rs`, FFI, `#[no_mangle]`/`#[link]`, proc-macros, `include!` escapes); parse `src/ordering/deps.toml`; run `cargo-deny` (RequireDeny — mandatory). The grader also scans the vendored dependency tree for `*-sys`/`links`/C-build-deps/prebuilt blobs. | `src/purity.rs` → `ssi-purity` |
 | **load corpus** | read every line of the corpus file into `(raw_index, name, Pattern)` | `corpus::corpus_indexed()` (`src/corpus.rs`) |
 | **B — run order()** | run `order()` **twice** in a killable child process, timed against a 2 s/matrix cap; a panic or cap breach fails the run | `src/main.rs` (`run_once`) |
 | **C — validate** | the returned permutation must be a true bijection of `0..n` | `validate_permutation` (`src/main.rs`) |
@@ -205,13 +206,19 @@ contract details and a suggested approach.
 **The grader is this same harness binary**, run in the repo's own GitHub Actions
 (`.github/workflows/benchmark.yml`) rather than a separate program. The Yukon
 platform builds a candidate from the validated baseline + **only** the
-submission's `src/ordering/`, dispatches the workflow on it, and reads the
-uploaded `score.json`. The workflow grades a **hidden** eval corpus — disjoint
-from the dev corpus, drawn from the same distribution, regenerated per round —
-injected via the `SSI_CORPUS_FILE` path override, downloaded at run time to a
-temp path outside the repo tree (so the eval bytes are never committed). Scoring
-runs in a sandbox (no network, no filesystem, a 2–4 GB memory cap, determinism
-re-runs).
+submission's `src/ordering/` (including its `deps.toml`), dispatches the workflow
+on it, and reads the uploaded `score.json`. The workflow: installs `cargo-deny`,
+runs `prepare-build.sh` (validate `deps.toml` → generate manifest → freeze
+lockfile → `cargo vendor` the full tree → `scan_vendored_tree` for
+native/FFI escapes), builds `--offline --locked` from the vendored crates.io
+snapshot, then runs the scored step in a no-network namespace (`unshare -n`). It
+grades a **hidden** eval corpus — disjoint from the dev corpus, drawn from the
+same distribution, regenerated per round — injected via the `SSI_CORPUS_FILE`
+path override, downloaded at run time to a temp path outside the repo tree (so
+the eval bytes are never committed). Scoring runs with no runtime network, a
+2–4 GB memory cap, and determinism re-runs. See
+[`DECISION-crate-policy.md`](DECISION-crate-policy.md) for the dependency-policy
+pipeline and its rationale.
 
 Because grading runs the identical harness + `ssi-scoring` functions you run
 locally, the number a contestant sees locally is structurally the number the

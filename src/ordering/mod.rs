@@ -4,9 +4,16 @@
 //!   `pub fn order(pattern: &Pattern) -> Vec<usize>`
 //! Returns `perm[k]` = the original index eliminated k-th; the result must be a
 //! bijection of `0..n`, deterministic (the harness runs `order()` twice and
-//! requires identical output), and return within the 2 s/matrix cap. stdlib
-//! only — no added dependencies, no FFI, no build scripts (the purity gate
-//! enforces this).
+//! requires identical output), and return within the 2 s/matrix cap.
+//!
+//! You MAY use permissive, PURE-RUST third-party crates: declare them in
+//! `src/ordering/deps.toml` (one `name = "x.y.z"` per line under
+//! `[dependencies]`; no git/path/features). The purity gate scans this
+//! directory for FFI / `#[no_mangle]` / `#[link]` / proc-macros / build scripts
+//! / `include!` outside the dir, and the grader rejects any dependency (whole
+//! transitive tree) that is `*-sys`, ships a native blob, compiles C, or carries
+//! a non-permissive license. Everything resolves from the frozen crates.io
+//! snapshot — no git or path sources. See `docs/DECISION-crate-policy.md`.
 //!
 //! ## Current approach: AMD (Approximate Minimum Degree)
 //!
@@ -18,8 +25,9 @@
 //! `memory/` for what to try next (nested dissection is the open headroom).
 //!
 //! Everything under `src/ordering/` is yours: split it, add submodules, swap the
-//! algorithm — as long as `order()` keeps its signature, stays deterministic,
-//! and uses only the standard library.
+//! algorithm, declare crates in `deps.toml` — as long as `order()` keeps its
+//! signature, stays deterministic, and stays pure Rust (no FFI / build scripts /
+//! native code, in this directory or any declared dependency's tree).
 
 mod amd;
 
