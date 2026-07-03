@@ -82,10 +82,28 @@ jobs:
       # SSI_CORPUS_FILE is the harness's corpus-path seam; when the fetch step
       # produced no eval file the value is empty, which the seam treats as unset
       # and falls back to the dev corpus (default-preserving).
+      #
+      # NETWORK ISOLATION: the scored run executes in a fresh network namespace
+      # (`unshare -n`, loopback only) so an untrusted submission's order() cannot
+      # reach the internet — it cannot call a hosted model or exfiltrate the eval
+      # corpus at runtime (docs/DECISION-crate-policy.md, Task 9). The corpus is
+      # already on local disk by this point, so no network is needed to score.
+      # Isolating only this process leaves the runner agent's control-plane
+      # connection intact (unlike a global `iptables OUTPUT DROP`). `set -euo
+      # pipefail` + the explicit `unshare` mean a failure to establish isolation
+      # fails the step LOUDLY rather than silently scoring un-isolated.
       - name: Benchmark
         env:
           SSI_CORPUS_FILE: ${{ steps.corpus.outputs.corpus_file }}
-        run: cargo run --release --offline --locked
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=SSI_CORPUS_FILE unshare -n -- bash -c '
+            ip link set lo up 2>/dev/null || true
+            # Best-effort sanity check (logged, non-gating): confirm egress is
+            # actually blocked inside the namespace before the scored run.
+            bash .github/scripts/assert-no-network.sh || true
+            exec cargo run --release --offline --locked
+          '
 
       # The score artifact is the channel Yukon reads. Upload even on failure so
       # a partial/zero score is visible rather than silently lost; the run still
