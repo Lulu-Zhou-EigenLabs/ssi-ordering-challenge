@@ -36,5 +36,11 @@ multiple-versions = "allow"
 yanked = "warn"
 
 [sources]
+# Every crate must come from the frozen crates.io snapshot. Git sources are the
+# escape hatch a policy filter cannot vet — deny them outright. The trusted
+# scoring wrapper (ssi-scoring) now depends on feral via exact crates.io releases
+# (feral =0.11.0, feral-* =0.2.1), so the whole tree — trusted closure and
+# contestant deps alike — resolves from the registry with no git exception.
 unknown-registry = "deny"
-unknown-git = "allow"
+unknown-git = "deny"
+allow-git = []
