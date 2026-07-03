@@ -1,0 +1,5 @@
+# Base cargo config; prepare-build.sh appends the `cargo vendor` [source]
+# replacement stanza to produce .cargo/config.toml. The rust-lld linker pin is
+# added in Task 7. This file is the single source of non-generated cargo config.
+[net]
+offline = true

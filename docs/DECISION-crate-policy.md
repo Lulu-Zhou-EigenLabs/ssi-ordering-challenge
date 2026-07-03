@@ -146,3 +146,6 @@ full `cargo test` green. cargo-deny 0.19.0.
 wrapper — beyond Task 4's original "config only" scope — because eliminating the
 git exception cleanly requires sourcing feral from the registry. Gated on the
 scoring-unchanged verification above; the frozen contract's score is unaffected.)
+
+### Task 6: Build wiring — vendoring + transitive tree scan
+Task 6 wired `cargo vendor` + `scan_vendored_tree` into `prepare-build.sh`. The empty-deps case (feral closure only) passes the transitive scan. The `openssl-sys` bad-dep test (with a freshly cleaned vendor directory) was caught by the **transitive tree scan layer** (`scan-tree` binary calling `scan_vendored_tree`) before any build: the scan rejected `vcpkg` (a transitive dependency of `openssl-sys`) for shipping a prebuilt native artifact (`vendor/vcpkg/test-data/no-status/installed/x64-windows/lib/zlib.lib`). Exit code: 1. The `*-sys` name check would also have caught `openssl-sys` itself, but the artifact check fired first. `git rm --cached Cargo.toml` was executed to untrack the now-generated manifest.
