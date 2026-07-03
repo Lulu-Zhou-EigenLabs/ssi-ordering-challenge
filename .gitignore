@@ -2,6 +2,9 @@
 /target
 **/target/
 
+# Generated manifest — regenerated from Cargo.toml.in by prepare-build.sh
+/Cargo.toml
+
 # Harness output — regenerated every run, would create noise/conflicts
 score.json
 

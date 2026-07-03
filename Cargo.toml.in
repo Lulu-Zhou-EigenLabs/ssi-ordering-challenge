@@ -1,0 +1,32 @@
+[package]
+name = "ssi-ordering-challenge"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Fill-reducing ordering challenge for sparse symmetric indefinite factorization"
+
+[workspace]
+members = ["ssi-scoring", "ssi-purity", "prototype-oracle"]
+
+# THE HARNESS depends on the scoring wrapper (trusted code). It is the ONLY
+# scoring code path shared with the grader (Invariant 2). Contestants may declare
+# permissive, pure-Rust crates via src/ordering/deps.toml; prepare-build.sh
+# regenerates the [dependencies] below from this template + the validated
+# deps.toml. The purity gate enforces those crates (and their whole transitive
+# tree) are pure Rust and permissively licensed (Invariant 3). See
+# docs/DECISION-crate-policy.md.
+[dependencies]
+ssi-scoring = { path = "ssi-scoring" }
+ssi-purity = { path = "ssi-purity" }
+# === GENERATED DEPS BELOW (prepare-build.sh; do not edit by hand) ===
+
+# Dev-only oracle: the original prototype Σc² scorer + synthetic pattern
+# generators. Used only by the cross-check tests in tests/; never linked into
+# the shipped harness binary (Invariant 4: closed-form tests / scorer
+# cross-check).
+[dev-dependencies]
+prototype-oracle = { path = "prototype-oracle" }
+
+[profile.release]
+opt-level = 3
+debug = false
