@@ -59,6 +59,72 @@ pub fn filter_declared_deps(ordering_dir: &Path) -> Result<Vec<DeclaredDep>, Gat
     parse_deps_toml(&src)
 }
 
+/// Scan a `cargo vendor` output directory: reject native-wrapper crates
+/// (`*-sys` name or a `links = ` manifest key) and FFI escapes in any `.rs`.
+/// Hard rejections — the no-C-compiler build backstops what a static scan
+/// misses; it must never be used to justify allowing what the scan finds.
+pub fn scan_vendored_tree(vendor_dir: &Path) -> Result<(), GateError> {
+    let Ok(entries) = std::fs::read_dir(vendor_dir) else {
+        return Ok(()); // no vendor dir = no third-party deps to scan
+    };
+    for entry in entries.flatten() {
+        let crate_dir = entry.path();
+        if !crate_dir.is_dir() {
+            continue;
+        }
+        let crate_name = crate_dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        // A vendored dir is `<name>-<version>`. The version always starts with a
+        // digit and a crate name never has a component starting with a digit, so
+        // the split point is the LAST `-` immediately followed by an ASCII digit.
+        // (A plain `rsplit_once('-')` would mis-split a hyphenated pre-release
+        // version like `foo-sys-1.0.0-alpha.1`, leaving `foo-sys-1.0.0` and
+        // letting a `*-sys` crate evade the check.)
+        let name_no_ver = crate_version_split(crate_name);
+        if name_no_ver.ends_with("-sys") {
+            return Err(GateError(format!(
+                "dependency-scan: `{crate_name}` is a `*-sys` native-library wrapper; \
+                 submissions must be pure Rust"
+            )));
+        }
+        let manifest = crate_dir.join("Cargo.toml");
+        if let Ok(toml) = std::fs::read_to_string(&manifest) {
+            for line in toml.lines() {
+                let t = line.trim();
+                if t.starts_with("links") && t.contains('=') {
+                    return Err(GateError(format!(
+                        "dependency-scan: `{crate_name}` declares `links` (native library); \
+                         submissions must be pure Rust"
+                    )));
+                }
+            }
+        }
+        let mut files = Vec::new();
+        collect_rs(&crate_dir, &mut files);
+        for file in files {
+            let src = std::fs::read_to_string(&file)
+                .map_err(|e| GateError(format!("dependency-scan: cannot read {}: {e}", file.display())))?;
+            scan_source(&file, &src)?; // reuses the FFI-token scan
+        }
+    }
+    Ok(())
+}
+
+/// Strip the trailing `-<version>` from a `cargo vendor` directory name, yielding
+/// the crate name. The version always begins with an ASCII digit and crate-name
+/// components never do, so the boundary is the LAST `-` followed by a digit. This
+/// handles hyphenated pre-release versions (`foo-1.0.0-alpha.1` → `foo`) that a
+/// naive last-hyphen split would get wrong. Returns the whole string if no such
+/// boundary exists (e.g. a name with no version suffix).
+fn crate_version_split(dir_name: &str) -> &str {
+    let bytes = dir_name.as_bytes();
+    for i in (0..bytes.len().saturating_sub(1)).rev() {
+        if bytes[i] == b'-' && bytes[i + 1].is_ascii_digit() {
+            return &dir_name[..i];
+        }
+    }
+    dir_name
+}
+
 /// PURITY: walk every `.rs` file under `src/ordering/` and reject foreign-code
 /// escape hatches. Returns the offending file + reason on the first hit.
 fn purity_scan(ordering_dir: &Path) -> Result<(), GateError> {
