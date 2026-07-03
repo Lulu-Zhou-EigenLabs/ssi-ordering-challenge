@@ -49,9 +49,13 @@ absolute values shift.
   matrix even at modest n (the `memory/` ND+AMD demo does exactly this — it is a
   reference, not a drop-in). Gate expensive paths by BOTH n AND nnz; use a
   quotient-graph / near-linear approach at scale.
-- A local purity & license gate runs before scoring: `src/ordering/` must be
-  stdlib-only — no `build.rs`, FFI/`extern`, `#[no_mangle]`/`#[link]`,
-  proc-macros, `include!` outside the dir, or added dependencies.
+- A local purity & license gate runs before scoring. `src/ordering/` may depend
+  on permissive, PURE-RUST crates declared in `src/ordering/deps.toml`. Forbidden
+  in submission code AND anywhere in the dependency tree: FFI/`extern`,
+  `#[no_mangle]`/`#[link]`, `build.rs` that compiles C, `*-sys` / `links` native
+  wrappers, proc-macro machinery in the submission dir, `include!` outside the
+  dir, non-registry sources, and non-permissive licenses. See
+  `docs/DECISION-crate-policy.md`.
 - Any FAIL fails the whole run; read the printed reason.
 
 ## Research
