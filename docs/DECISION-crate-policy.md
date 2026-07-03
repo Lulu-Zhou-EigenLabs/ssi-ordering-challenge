@@ -99,3 +99,6 @@ This section is reserved for notes appended by later implementation tasks (e.g.,
 
 ### Task 2: Name-allowlist retirement
 Task 2 retired the name-allowlist unit tests (`dependency_names_reads_dependencies_table_only`, `extra_dependency_is_rejected`, `ssi_purity_is_an_allowed_dependency`); `check()` no longer asserts the manifest dependency set. The submission-facing filter entry `filter_declared_deps` now validates declared deps for shape only; tree-level license/source/FFI enforcement moves to the grader's vendored-tree scan (Task 5).
+
+### Task 3: Manifest template decision
+Task 3: chose to gitignore the generated Cargo.toml and commit Cargo.toml.in as source of truth (plan's recommended option).
