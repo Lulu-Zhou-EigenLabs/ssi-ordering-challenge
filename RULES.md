@@ -31,8 +31,13 @@ absolute values shift.
 
 1. Read `results.tsv` and `src/ordering/memory/index.md` + `memory/log.md`
    before doing anything (see "The knowledge base" below).
-2. Form a hypothesis. Edit only `src/ordering/` (submodules allowed).
-3. Run: `cargo run --release -- --note "<hypothesis>"`
+2. Form a hypothesis. Edit only `src/ordering/` (submodules allowed). To use a
+   crate, add it to `src/ordering/deps.toml` (`name = "x.y.z"`, permissive
+   pure-Rust only).
+3. Run: `bash scripts/prepare-build.sh && cargo run --release --offline --locked -- --note "<hypothesis>"`
+   (`prepare-build.sh` regenerates `Cargo.toml` from `deps.toml`, vendors, and
+   scans; skip it only if `deps.toml` is unchanged. Requires `cargo-deny`:
+   `cargo install cargo-deny`.)
 4. Read the per-matrix table. Attribute wins/losses per family and size bucket
    (NLP, QCP, QP, QCQP; n up to ~340k).
 5. Record findings in the knowledge base (an experiment page + one `log.md`
@@ -51,11 +56,13 @@ absolute values shift.
   quotient-graph / near-linear approach at scale.
 - A local purity & license gate runs before scoring. `src/ordering/` may depend
   on permissive, PURE-RUST crates declared in `src/ordering/deps.toml`. Forbidden
-  in submission code AND anywhere in the dependency tree: FFI/`extern`,
-  `#[no_mangle]`/`#[link]`, `build.rs` that compiles C, `*-sys` / `links` native
-  wrappers, proc-macro machinery in the submission dir, `include!` outside the
-  dir, non-registry sources, and non-permissive licenses. See
-  `docs/DECISION-crate-policy.md`.
+  in your submission code (`src/ordering/`): FFI/`extern`, `#[no_mangle]`/`#[link]`,
+  proc-macro machinery, `build.rs`, and `include!` outside the dir. Forbidden
+  anywhere in the dependency tree: `*-sys` / `links` native wrappers, a `build.rs`
+  that compiles C (i.e. a `cc`/`cmake`/`bindgen` build-dependency), prebuilt
+  native blobs, non-crates.io (git/path) sources, and non-permissive licenses.
+  (The dependency tree is checked for those native/license signals, not
+  source-scanned for FFI tokens.) See `docs/DECISION-crate-policy.md`.
 - Any FAIL fails the whole run; read the printed reason.
 
 ## Research

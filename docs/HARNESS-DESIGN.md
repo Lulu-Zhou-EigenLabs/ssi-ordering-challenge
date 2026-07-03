@@ -69,8 +69,8 @@ Per run, `main.rs` executes the grader stages of the proposal in miniature:
 
 | Proposal stage | Harness implementation |
 |---|---|
-| A — purity & license gate | `purity::check`: scans `src/ordering/` for build.rs / FFI / `#[no_mangle]` / `#[link]` / proc-macros / `include!` escapes / added dependencies, and runs `cargo-deny` against `deny.toml` (fallback to a dependency scan if cargo-deny is absent). Mirrors the grader's authoritative Stage A — same rules, same `deny.toml`. |
-| B — sandboxed compile & run | `cargo run` here runs each `order()` in a child process (`--worker` mode) supervised by a watchdog (`src/watchdog.rs`) that SIGKILLs it at the **2 s/matrix time cap** — the same enforcement mechanism the grader uses; the production grader additionally adds a no-network/no-filesystem sandbox and a 2–4 GB memory cap |
+| A — purity & license gate | `purity::check` (RequireDeny mode): scans `src/ordering/` for build.rs / FFI / `#[no_mangle]` / `#[link]` / proc-macros / `include!` escapes, parses `src/ordering/deps.toml`, and runs `cargo-deny` against `deny.toml` (mandatory — a missing `cargo-deny` fails the gate). The grader additionally scans the vendored dependency tree (`ssi_purity::scan_vendored_tree`) for `*-sys` names, prebuilt native blobs, and C-toolchain build-deps. Mirrors the grader's authoritative Stage A — same rules, same `deny.toml`. |
+| B — sandboxed compile & run | `cargo run` here runs each `order()` in a child process (`--worker` mode) supervised by a watchdog (`src/watchdog.rs`) that SIGKILLs it at the **2 s/matrix time cap** — the same enforcement mechanism the grader uses; the grader additionally builds `--offline --locked` against a vendored crates.io snapshot and runs the scored step in a no-network namespace (`unshare -n`) with a 2–4 GB memory cap |
 | C — output validation | `validate_permutation`: exact bijection check; a panic in `order()` aborts the worker process (non-zero exit, no perm file), which the parent treats as a failed run |
 | D — trusted scoring | `ssi_scoring::score`: feral's pattern-pure building blocks — `symmetric_pattern → permute_pattern → EliminationTree::from_pattern → column_counts_gnp`, then `nnz(L) = Σ cⱼ` and `flops = Σ cⱼ²`, computed from the permutation alone |
 | E — reproducibility | the ordering is run twice per matrix; outputs must be identical |
@@ -144,29 +144,37 @@ targeted hypotheses. Failure messages name the offending matrix and reason
 | read the answer / RHS | doesn't exist: `Pattern` carries structure only; loader drops values |
 | hardcode permutations for the corpus | works locally by design (it's the *dev* corpus); defeated in production by the hidden, per-round-regenerated eval corpus + memory cap |
 | edit the harness/scorer/baseline | local honor system; the grader rebuilds the harness and `ssi-scoring` from its own trusted copy and takes only `src/ordering/` from the submission |
-| escape to non-Rust code / deps | `purity::check` rejects build scripts, FFI, `#[no_mangle]`/`#[link]`, proc-macros, and added dependencies in `src/ordering/`; `cargo-deny` rejects non-permissive licenses; the production grader builds offline against a vendored registry |
+| escape to non-Rust code / deps | three layers: (1) `purity::check` rejects build scripts, FFI, `#[no_mangle]`/`#[link]`, proc-macros, `include!` escapes in `src/ordering/`; (2) declared crates + their whole transitive tree are scanned (`scan_vendored_tree`) for `*-sys`/`links`/C-build-deps/prebuilt blobs, and `cargo-deny` rejects non-permissive licenses and non-crates.io sources; (3) the grader builds `--offline --locked` from a vendored snapshot and scores in a no-network namespace — so no closed-source code can be fetched, and any runtime egress is blocked. See [`DECISION-crate-policy.md`](DECISION-crate-policy.md). |
 
-### Why stdlib-only, and how to relax it
+### Pure Rust via three layers (not stdlib-only)
 
 The governing proposal requires submissions to be **pure Rust, no foreign-code
 escape, permissively licensed** (`COMPETITION-PROPOSAL.md` §2.4 / §6 Stage A) —
-it does *not* require the standard library only. **stdlib-only is a stricter
-policy this challenge adopts** because it is the cheapest airtight way to
-guarantee that pure-Rust rule. The hard case for "pure Rust" is *arbitrary*
-dependencies: a permissively licensed, innocently named crate can still hide an
-`extern "C"` block (or pull in a transitive dependency that does), which a
-license/name check cannot catch and a static FFI scan cannot reliably prove
-absent. Forbidding all dependencies removes that vector, so the gate only has
-to scan the contestant's own `src/ordering/`.
+it does *not* require the standard library only. The challenge originally
+adopted stdlib-only as the cheapest airtight proxy, but that forced contestants
+to reimplement common structures. The current policy allows **permissive,
+pure-Rust crates** declared in `src/ordering/deps.toml`, enforced by three
+layers instead of a blanket ban (see [`DECISION-crate-policy.md`](DECISION-crate-policy.md)):
 
-This **can** be relaxed to a small **fixed allowlist** of vetted, permissive,
-pure-Rust crates without reopening that hole: hand-vet each crate and its
-transitive tree once, add it to the trusted workspace `Cargo.toml` and to
-`ALLOWED` in `ssi-purity`, and build offline/locked. Because the grader
-rebuilds from its own frozen manifest (overlaying only `src/ordering/`), the
-harness and grader see the same dependency set, so local↔grader equivalence
-holds automatically. The rationale and exact steps live next to the rule, in
-the `dependency_scan` doc comment in `ssi-purity/src/lib.rs`.
+1. **Source purity of the submission** — `purity::check` scans `src/ordering/`
+   itself (the ordering applied to solvers) strictly, as before.
+2. **Dependency-tree native/license signals** — after `cargo vendor`,
+   `scan_vendored_tree` hard-rejects `*-sys` names, prebuilt native blobs, and
+   C-toolchain build-dependencies across the whole transitive tree; `cargo-deny`
+   rejects non-permissive licenses and any non-crates.io source. The dependency
+   tree is *not* source-token-scanned for FFI — that is unsound (it conflates
+   safe C-ABI exports and proc-macros with real foreign imports).
+3. **Environmental backstop** — the grader builds `--offline --locked` from a
+   frozen crates.io vendor snapshot and scores in a no-network namespace. This
+   is what makes "no foreign code executes / no closed-source code enters" true:
+   everything compiled is public crates.io source, nothing is fetched at build
+   or run time, and a submission cannot reach the network at runtime.
+
+Because both the harness and the grader run the identical `ssi-purity` logic and
+`prepare-build.sh`, local↔grader equivalence holds (Invariant 2). The accepted
+residual — an *undeclared* `build.rs` compiling hidden C — is low-value for an
+ordering competition and is boxed by the no-network run, held-out corpus,
+recomputed score, and determinism re-runs.
 
 ## 5. What still differs in the production grader
 
@@ -175,18 +183,21 @@ changes — those are shared via `ssi-scoring`, and **the grader is this same
 harness binary**. Grading runs in the repo's own GitHub Actions
 (`.github/workflows/benchmark.yml`), which the Yukon platform dispatches against
 a candidate built from the validated baseline + the submission's `src/ordering/`
-only. The workflow just runs `cargo run --release` and uploads `score.json`;
-there is no separate scoring code to drift from what you run locally. Grading
-adds:
+only. The workflow installs `cargo-deny`, runs `prepare-build.sh` (validate
+`deps.toml` → vendor → scan tree), builds `--offline --locked`, and runs the
+scored step in a no-network namespace, then uploads `score.json`; there is no
+separate scoring code to drift from what you run locally. Grading adds:
 
 1. **The hidden eval corpus**: a disjoint, stratified, per-round-regenerated
    slice from the same IPM-harvested distribution (Phase 2 built the pipeline).
    The workflow injects it via `SSI_CORPUS_FILE`, downloaded at run time to a
    temp path outside the repo tree — so the eval bytes are never committed and
    never published. Patterns only — no reference labeling needed.
-2. **The sandbox**: contestant crate compiled offline against a vendored
-   registry, run with no network/filesystem, 2–4 GB memory cap (which doubles
-   as the anti-lookup-table cap).
+2. **The sandbox**: the contestant crate and its declared dependencies are
+   vendored from the frozen crates.io snapshot and built `--offline --locked`
+   (no build-time network); the scored run executes in a fresh network namespace
+   (`unshare -n`, loopback only) so `order()` has no runtime egress, under the
+   2–4 GB memory cap (which doubles as the anti-lookup-table cap).
 3. **The platform wiring**: Yukon opens a PR per submission, dispatches the
    workflow on its head commit, reads the uploaded `score.json`, posts the
    score + metrics, and merges (accept) or closes (reject). AMD = 1.00 is the
