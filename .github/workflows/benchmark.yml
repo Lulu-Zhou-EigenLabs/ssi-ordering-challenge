@@ -36,9 +36,25 @@ jobs:
       - name: Setup toolchain
         uses: dtolnay/rust-toolchain@stable # honors the repo's rust-toolchain file
 
-      # Stable step name "Setup": a failure here maps to setup_failed.
+      # cargo-deny is REQUIRED for grading (the harness runs in RequireDeny mode):
+      # the license/source gate is authoritative now that submissions may declare
+      # crates. A missing cargo-deny is a hard failure, not a fallback.
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      # Validate deps.toml, generate the trusted manifest, freeze the lockfile,
+      # vendor the FULL transitive tree, and scan it for native/FFI escapes. This
+      # is the ONLY step that uses the network (cargo vendor fetches from the
+      # frozen crates.io snapshot); the build and the scored run are offline.
+      - name: Prepare build (validate deps, vendor, scan tree)
+        run: bash scripts/prepare-build.sh
+
+      # Stable step name "Setup": a failure here maps to setup_failed. Build from
+      # the vendored snapshot with no network and the frozen lockfile — nothing
+      # outside vendor/ can enter, so no closed-source or foreign code can be
+      # fetched at build time (docs/DECISION-crate-policy.md, Task 7).
       - name: Setup
-        run: cargo build --release
+        run: cargo build --release --offline --locked
 
       # Fetch today's hidden EVAL corpus to a temp path OUTSIDE the repo tree, so
       # the eval bytes never sit at a tracked path and can never be committed
@@ -69,7 +85,7 @@ jobs:
       - name: Benchmark
         env:
           SSI_CORPUS_FILE: ${{ steps.corpus.outputs.corpus_file }}
-        run: cargo run --release
+        run: cargo run --release --offline --locked
 
       # The score artifact is the channel Yukon reads. Upload even on failure so
       # a partial/zero score is visible rather than silently lost; the run still
