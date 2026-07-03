@@ -105,6 +105,38 @@ fn cc_build_dependency_table_form_is_rejected() {
 }
 
 #[test]
+fn target_conditional_cc_build_dependency_is_rejected() {
+    // A C-toolchain build-dep under a target-conditional section
+    // (`[target.'cfg(...)'.build-dependencies]`) must be caught too — otherwise
+    // a crate that compiles C only on some target would pass the scan on a host
+    // where that target's section is inert.
+    let root = std::env::temp_dir().join("ssi-vendor-cc-target");
+    let _ = std::fs::remove_dir_all(&root);
+    vwrite(
+        &root,
+        "foo-1.0/Cargo.toml",
+        "[package]\nname=\"foo\"\n[target.'cfg(unix)'.build-dependencies]\ncc = \"1.0\"\n",
+    );
+    vwrite(&root, "foo-1.0/src/lib.rs", "pub fn f() {}\n");
+    assert!(scan_vendored_tree(&root).is_err());
+}
+
+#[test]
+fn workspace_inherited_cc_build_dependency_is_rejected() {
+    // The dotted `cc.workspace = true` / `cc.version = "1"` key forms must be
+    // recognized as the `cc` build-dep, not read as a key named `cc.workspace`.
+    let root = std::env::temp_dir().join("ssi-vendor-cc-workspace");
+    let _ = std::fs::remove_dir_all(&root);
+    vwrite(
+        &root,
+        "foo-1.0/Cargo.toml",
+        "[package]\nname=\"foo\"\n[build-dependencies]\ncc.workspace = true\n",
+    );
+    vwrite(&root, "foo-1.0/src/lib.rs", "pub fn f() {}\n");
+    assert!(scan_vendored_tree(&root).is_err());
+}
+
+#[test]
 fn prebuilt_native_artifact_is_rejected() {
     // A committed linkable blob bypasses building from source.
     let root = std::env::temp_dir().join("ssi-vendor-blob");

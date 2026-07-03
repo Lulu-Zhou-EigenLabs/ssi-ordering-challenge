@@ -140,24 +140,45 @@ fn c_build_dependency(manifest: &str) -> Option<String> {
     let mut in_build_deps = false;
     for line in manifest.lines() {
         let t = line.trim();
-        if let Some(rest) = t.strip_prefix("[build-dependencies.") {
-            let name = rest.trim_end_matches(']').trim();
-            if TOOLS.contains(&name) {
-                return Some(name.to_string());
+        // A `[build-dependencies.<name>]` table header, including the
+        // target-conditional form `[target.'cfg(...)'.build-dependencies.<name>]`.
+        if let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            let build_dep_name = inner
+                .strip_prefix("build-dependencies.")
+                .or_else(|| {
+                    inner
+                        .rsplit_once(".build-dependencies.")
+                        .map(|(_, name)| name)
+                });
+            if let Some(name) = build_dep_name {
+                let name = name.trim();
+                if TOOLS.contains(&name) {
+                    return Some(name.to_string());
+                }
+                in_build_deps = false;
+                continue;
             }
-            in_build_deps = false;
-            continue;
         }
         if t.starts_with('[') {
-            in_build_deps = t == "[build-dependencies]";
+            // A `[build-dependencies]` table or its target-conditional form
+            // `[target.'cfg(...)'.build-dependencies]`. Anything else closes the
+            // current build-deps table.
+            in_build_deps = t == "[build-dependencies]"
+                || (t.starts_with("[target.") && t.ends_with(".build-dependencies]"));
             continue;
         }
         if in_build_deps && !t.is_empty() && !t.starts_with('#') {
+            // The dep name is the key before `=`/whitespace, with any dotted
+            // suffix stripped so `cc.workspace = true` / `cc.version = "1"` are
+            // recognized as `cc`.
             let name = t
                 .split(|c| c == '=' || c == ' ' || c == '\t')
                 .next()
                 .unwrap_or("")
-                .trim();
+                .trim()
+                .split('.')
+                .next()
+                .unwrap_or("");
             if TOOLS.contains(&name) {
                 return Some(name.to_string());
             }
@@ -168,6 +189,12 @@ fn c_build_dependency(manifest: &str) -> Option<String> {
 
 /// Walk a crate directory for a committed prebuilt native artifact (a linkable
 /// object/library). Returns the first such path found, or `None`.
+///
+/// Matches by final extension. This catches the standard linkable forms; a
+/// versioned shared object (`libfoo.so.1.2`) whose final component is not one of
+/// these is not detected by extension alone, but such binaries are not expected
+/// in a source-distributed vendored crate, and the no-C-compiler build (Task 7)
+/// backstops any attempt to actually link native code at build time.
 fn find_prebuilt_artifact(dir: &Path) -> Option<PathBuf> {
     const EXTS: &[&str] = &["a", "so", "dylib", "dll", "lib", "o", "obj"];
     let mut stack = vec![dir.to_path_buf()];
