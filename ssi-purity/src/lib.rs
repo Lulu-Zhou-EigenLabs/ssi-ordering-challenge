@@ -1,14 +1,15 @@
 //! Shared Stage-A purity & license gate (lifted from the harness's src/purity.rs
 //! in Phase 4a so submissions are scanned by ONE implementation). The grader
 //! runs this same harness binary, so both local and graded runs use the same
-//! mode — `FallbackAllowed` — and cannot drift. Two modes exist:
-//! - `Mode::FallbackAllowed` — if `cargo-deny` is absent, fall back to the
-//!   dependency scan with a printed note. Sound under the zero-dependency
-//!   policy: with no added crates there is no new license to vet. This is what
-//!   the harness (and thus the grader) uses today.
+//! mode — `RequireDeny` — and cannot drift. Two modes exist:
 //! - `Mode::RequireDeny` — `cargo-deny` MUST be installed and pass; no fallback.
-//!   Dormant: reserved for when the dependency allowlist grows to vetted
-//!   third-party crates and the authoritative license check starts to matter.
+//!   This is what the harness (and thus the grader) uses today: with submissions
+//!   able to declare third-party crates, a dependency can carry a non-permissive
+//!   license, so the authoritative license check is load-bearing.
+//! - `Mode::FallbackAllowed` — if `cargo-deny` is absent, skip the license check
+//!   with a printed note. Retired from active use: it was sound only under the
+//!   old stdlib-only policy, where a submission added no crate and thus no new
+//!   license to vet. Kept for tests / that historical contract.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -420,5 +421,15 @@ mod tests {
     fn include_outside_dir_is_rejected() {
         let src = "include!(\"../../../etc/passwd\");\n";
         assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn require_deny_mode_errors_on_missing_deny_toml() {
+        // With crates allowed, the license check is load-bearing. RequireDeny
+        // must surface a missing deny.toml as an error (not silently skip it).
+        let tmp = std::env::temp_dir().join("ssi-requiredeny");
+        let _ = std::fs::create_dir_all(tmp.join("src/ordering"));
+        let _ = std::fs::remove_file(tmp.join("deny.toml"));
+        assert!(check(&tmp, Mode::RequireDeny).is_err());
     }
 }
