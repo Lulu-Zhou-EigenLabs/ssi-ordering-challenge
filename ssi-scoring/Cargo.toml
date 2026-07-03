@@ -8,10 +8,12 @@ description = "The ONE scoring code path for the SSI ordering challenge: a thin 
 # THE SCORING WRAPPER. This is the only code in the workspace that calls
 # into feral.
 [dependencies]
-# feral is pinned to a git rev (= the workspace feral/ checkout's HEAD) so a
-# prepared tree copied anywhere by the grader builds without a local feral
-# checkout or path-anchoring. The rev freezes the scored code: same rev = same
-# scores (Invariant 2). Verified to resolve all three crates from this one repo.
-feral = { git = "https://github.com/jkitchin/feral.git", rev = "5ab8074b3c87c96d223e56e8012c38b1cf591e0e" }
-feral-amd = { git = "https://github.com/jkitchin/feral.git", rev = "5ab8074b3c87c96d223e56e8012c38b1cf591e0e" }
-feral-ordering-core = { git = "https://github.com/jkitchin/feral.git", rev = "5ab8074b3c87c96d223e56e8012c38b1cf591e0e" }
+# feral is pinned to exact crates.io releases (feral 0.11.0 == the v0.11.0 tag
+# the workspace was formerly pinned to by git rev; feral-* companions at 0.2.1).
+# Exact "=" versions freeze the scored code: same versions = same scores
+# (Invariant 2). Sourcing from the frozen crates.io registry — not git — lets the
+# grader build entirely from a vendored crates.io snapshot with no git-source
+# exception (deny.toml: unknown-git = "deny", empty allow-git).
+feral = "=0.11.0"
+feral-amd = "=0.2.1"
+feral-ordering-core = "=0.2.1"

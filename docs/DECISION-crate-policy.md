@@ -102,3 +102,47 @@ Task 2 retired the name-allowlist unit tests (`dependency_names_reads_dependenci
 
 ### Task 3: Manifest template decision
 Task 3: chose to gitignore the generated Cargo.toml and commit Cargo.toml.in as source of truth (plan's recommended option).
+
+### Task 4: git-source policy — deviation from the plan's assumption
+The plan's Task 4 assumed `cargo deny check sources` would pass with
+`unknown-git = "deny"` and an empty `allow-git = []`, on the premise that the
+only path deps (`ssi-scoring`, `ssi-purity`) are workspace-local, not git. That
+assumption is **factually wrong**: the trusted scoring wrapper `ssi-scoring`
+depends on **feral**, which is pinned to a fixed git rev
+(`git+https://github.com/jkitchin/feral.git`, rev `5ab8074…`). An empty
+`allow-git` therefore fails the *trusted* tree with seven `source-not-allowed`
+errors (feral, feral-amd, feral-amf, feral-kahip, feral-metis,
+feral-ordering-core, feral-scotch — all from that one repo).
+
+Per CLAUDE.md's precedence rule (record deviations when a governing-doc
+assumption is factually wrong), Task 4 removes the git source entirely rather
+than carrying a git exception. **feral is published on crates.io**, and the
+exact versions the workspace was git-pinned to are all available: `feral 0.11.0`
+(the git rev `5ab8074…` is tagged `v0.11.0` in the feral checkout, crate version
+0.11.0, clean tree) and the companions at `0.2.1` (`feral-amd`,
+`feral-ordering-core`, and their transitive `feral-amf`/`feral-kahip`/
+`feral-metis`/`feral-scotch`). So `ssi-scoring/Cargo.toml` was switched from git
+deps to exact crates.io releases:
+
+```toml
+feral = "=0.11.0"
+feral-amd = "=0.2.1"
+feral-ordering-core = "=0.2.1"
+```
+
+Exact `=` pins freeze the scored code (Invariant 2). **Scoring verified
+byte-identical after the switch**: the `pinned_identity_scores_on_committed_dev_matrices`
+exact-equivalence test and both `scorer_crosscheck` tests pass, and `score.json`
+is identical to the pre-switch git build (`1.0000`/`1.0000` over the 13-matrix
+dev sample). The regenerated `Cargo.lock` has zero `git+` sources.
+
+With no git source anywhere in the tree, `deny.toml` uses the strict form:
+`unknown-git = "deny"` with an empty `allow-git = []` — the whole tree (trusted
+closure and contestant deps alike) resolves from the frozen crates.io registry.
+`cargo deny check sources` → `sources ok`; `check licenses` → `licenses ok`;
+full `cargo test` green. cargo-deny 0.19.0.
+
+(Scope note: this task edited `ssi-scoring/Cargo.toml`, the trusted scoring
+wrapper — beyond Task 4's original "config only" scope — because eliminating the
+git exception cleanly requires sourcing feral from the registry. Gated on the
+scoring-unchanged verification above; the frozen contract's score is unaffected.)
