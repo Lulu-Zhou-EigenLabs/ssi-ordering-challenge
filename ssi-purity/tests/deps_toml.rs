@@ -1,4 +1,24 @@
 use ssi_purity::{parse_deps_toml, DeclaredDep};
+use std::fs;
+use ssi_purity::filter_declared_deps;
+
+#[test]
+fn missing_deps_toml_yields_empty() {
+    let dir = std::env::temp_dir().join("ssi-purity-test-nodeps");
+    let _ = fs::create_dir_all(&dir);
+    let _ = fs::remove_file(dir.join("deps.toml"));
+    assert!(filter_declared_deps(&dir).unwrap().is_empty());
+}
+
+#[test]
+fn present_deps_toml_is_parsed() {
+    let dir = std::env::temp_dir().join("ssi-purity-test-withdeps");
+    let _ = fs::create_dir_all(&dir);
+    fs::write(dir.join("deps.toml"), "[dependencies]\nrand = \"0.8.5\"\n").unwrap();
+    let got = filter_declared_deps(&dir).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].name, "rand");
+}
 
 #[test]
 fn parses_simple_version_entries() {

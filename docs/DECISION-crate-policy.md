@@ -96,3 +96,6 @@ Rationale: this list covers the vast majority of high-quality, widely-used Rust 
 ## Follow-up records (appended by later tasks)
 
 This section is reserved for notes appended by later implementation tasks (e.g., Task 2: retired tests; Task 3: Cargo.toml vs Cargo.toml.in; Task 6: observed defense-layer failures during sandbox testing). Later tasks will append subsections here to maintain a single chronological record of the amendment's implementation and any discovered issues.
+
+### Task 2: Name-allowlist retirement
+Task 2 retired the name-allowlist unit tests (`dependency_names_reads_dependencies_table_only`, `extra_dependency_is_rejected`, `ssi_purity_is_an_allowed_dependency`); `check()` no longer asserts the manifest dependency set. The submission-facing filter entry `filter_declared_deps` now validates declared deps for shape only; tree-level license/source/FFI enforcement moves to the grader's vendored-tree scan (Task 5).

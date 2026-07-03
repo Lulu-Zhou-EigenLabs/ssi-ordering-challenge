@@ -3,8 +3,8 @@ name = "ssi-purity"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Shared Stage-A purity & license gate for the SSI ordering challenge. Used by the public harness (FallbackAllowed mode) and the private grader (RequireDeny mode) so both sides scan submissions identically."
+description = "Shared Stage-A purity & license gate for the SSI ordering challenge. Used by the public harness (FallbackAllowed mode) and the private grader (RequireDeny mode) so both sides scan submissions identically. Validates declared deps in src/ordering/deps.toml; the grader scans the vendored tree for license/source/FFI."
 
-# Stdlib only. The license check shells out to `cargo-deny`; there is no crate
-# dependency here, so this lib can never widen the submission's dependency set.
+# Stdlib only. Submissions may declare permissive pure-Rust crates in deps.toml,
+# but ssi-purity itself stays stdlib-only. License checks shell out to `cargo-deny`.
 [dependencies]
