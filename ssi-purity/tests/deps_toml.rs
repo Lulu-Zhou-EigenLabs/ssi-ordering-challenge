@@ -76,21 +76,77 @@ fn clean_vendor_tree_passes() {
 }
 
 #[test]
-fn links_key_is_rejected() {
-    let root = std::env::temp_dir().join("ssi-vendor-links");
+fn cc_build_dependency_is_rejected() {
+    // A `cc`/`cmake`/`bindgen`/... build-dependency compiles native code from
+    // build.rs — a sound, false-positive-free native signal we reject.
+    let root = std::env::temp_dir().join("ssi-vendor-cc");
     let _ = std::fs::remove_dir_all(&root);
-    vwrite(&root, "foo-1.0/Cargo.toml", "[package]\nname=\"foo\"\nlinks=\"foo\"\n");
+    vwrite(
+        &root,
+        "flate2-1.0/Cargo.toml",
+        "[package]\nname=\"flate2\"\n[build-dependencies]\ncc = \"1.0\"\n",
+    );
+    vwrite(&root, "flate2-1.0/src/lib.rs", "pub fn f() {}\n");
+    assert!(scan_vendored_tree(&root).is_err());
+}
+
+#[test]
+fn cc_build_dependency_table_form_is_rejected() {
+    // The `[build-dependencies.cc]` table form must be caught too.
+    let root = std::env::temp_dir().join("ssi-vendor-cc-table");
+    let _ = std::fs::remove_dir_all(&root);
+    vwrite(
+        &root,
+        "foo-1.0/Cargo.toml",
+        "[package]\nname=\"foo\"\n[build-dependencies.cc]\nversion = \"1.0\"\n",
+    );
     vwrite(&root, "foo-1.0/src/lib.rs", "pub fn f() {}\n");
     assert!(scan_vendored_tree(&root).is_err());
 }
 
 #[test]
-fn extern_c_in_dep_is_rejected() {
-    let root = std::env::temp_dir().join("ssi-vendor-extern");
+fn prebuilt_native_artifact_is_rejected() {
+    // A committed linkable blob bypasses building from source.
+    let root = std::env::temp_dir().join("ssi-vendor-blob");
     let _ = std::fs::remove_dir_all(&root);
-    vwrite(&root, "bar-1.0/Cargo.toml", "[package]\nname=\"bar\"\n");
-    vwrite(&root, "bar-1.0/src/lib.rs", "extern \"C\" { fn evil(); }\n");
+    vwrite(&root, "foo-1.0/Cargo.toml", "[package]\nname=\"foo\"\n");
+    vwrite(&root, "foo-1.0/src/lib.rs", "pub fn f() {}\n");
+    vwrite(&root, "foo-1.0/vendor/libfoo.a", "\x7fELF not really\n");
     assert!(scan_vendored_tree(&root).is_err());
+}
+
+#[test]
+fn bare_links_version_guard_is_allowed() {
+    // `links` alone links NOTHING in the common single-version-guard idiom
+    // (e.g. rayon-core, which feral's tree pulls in). Rejecting it would bar a
+    // pure-Rust crate; the no-C-compiler build backstops any real native link.
+    let root = std::env::temp_dir().join("ssi-vendor-links-guard");
+    let _ = std::fs::remove_dir_all(&root);
+    vwrite(
+        &root,
+        "rayon-core-1.13.0/Cargo.toml",
+        "[package]\nname=\"rayon-core\"\nlinks=\"rayon-core\"\n",
+    );
+    vwrite(&root, "rayon-core-1.13.0/src/lib.rs", "pub fn f() {}\n");
+    assert!(scan_vendored_tree(&root).is_ok());
+}
+
+#[test]
+fn c_abi_export_and_proc_macro_in_dep_are_allowed() {
+    // A dependency may legitimately EXPORT a C ABI (`#[no_mangle] extern "C" fn`,
+    // a definition — no foreign code runs) or use a proc-macro. These are NOT
+    // scanned for in the dependency tree: source purity is enforced only on the
+    // submission (src/ordering/), and the no-cc build guarantees no foreign code
+    // executes. (This is exactly what feral's capi.rs / serde's proc-macros do.)
+    let root = std::env::temp_dir().join("ssi-vendor-cabi-export");
+    let _ = std::fs::remove_dir_all(&root);
+    vwrite(&root, "feralish-0.1.0/Cargo.toml", "[package]\nname=\"feralish\"\n");
+    vwrite(
+        &root,
+        "feralish-0.1.0/src/lib.rs",
+        "#[no_mangle]\npub extern \"C\" fn exported() -> u32 { 1 }\nuse proc_macro::TokenStream;\n",
+    );
+    assert!(scan_vendored_tree(&root).is_ok());
 }
 
 #[test]

@@ -59,10 +59,33 @@ pub fn filter_declared_deps(ordering_dir: &Path) -> Result<Vec<DeclaredDep>, Gat
     parse_deps_toml(&src)
 }
 
-/// Scan a `cargo vendor` output directory: reject native-wrapper crates
-/// (`*-sys` name or a `links = ` manifest key) and FFI escapes in any `.rs`.
-/// Hard rejections — the no-C-compiler build backstops what a static scan
-/// misses; it must never be used to justify allowing what the scan finds.
+/// Scan a `cargo vendor` output directory for native-code signals, applied
+/// UNIFORMLY to every vendored crate (no trusted allowlist — the dependency
+/// tree is not assumed safe, though feral is vetted).
+///
+/// ## What this scans, and what it deliberately does NOT
+///
+/// The code whose *source purity* we protect is the submission itself
+/// (`src/ordering/`, scanned by `purity_scan`): that is the ordering applied to
+/// solvers. For the DEPENDENCY tree, source-token purity is the wrong tool — a
+/// crate may legitimately *export* a C ABI (`#[no_mangle] pub extern "C" fn`),
+/// define a C-ABI fn, use a proc-macro, or set `links` purely as a
+/// single-version guard (e.g. rayon-core links nothing). Rejecting those tokens
+/// would bar a large, safe swath of the ecosystem while proving nothing: the
+/// real guarantee that *no foreign code executes* is the no-C-compiler build
+/// (Task 7) plus the no-network runtime (Task 9).
+///
+/// So this scan rejects only sound, near-false-positive-free signals that a
+/// crate carries or compiles NON-Rust code:
+///   - a `*-sys` crate name (native-library-wrapper convention — cheap early
+///     signal),
+///   - a prebuilt native artifact committed in the crate (`.a/.so/.dylib/.dll/
+///     .lib/.o/.obj`) — a linkable blob bypasses "build from source",
+///   - a C/C++-toolchain build-dependency (`cc`/`cmake`/`bindgen`/`nasm`/`gcc`/
+///     `clang`) — the crate compiles native code from its build script.
+/// These are hard rejections; the no-C-compiler build backstops anything a
+/// static scan cannot decide, and must never be used to justify allowing what
+/// the scan finds.
 pub fn scan_vendored_tree(vendor_dir: &Path) -> Result<(), GateError> {
     let Ok(entries) = std::fs::read_dir(vendor_dir) else {
         return Ok(()); // no vendor dir = no third-party deps to scan
@@ -83,30 +106,87 @@ pub fn scan_vendored_tree(vendor_dir: &Path) -> Result<(), GateError> {
         if name_no_ver.ends_with("-sys") {
             return Err(GateError(format!(
                 "dependency-scan: `{crate_name}` is a `*-sys` native-library wrapper; \
-                 submissions must be pure Rust"
+                 dependencies must be pure Rust (no native library to link)"
             )));
         }
+        // A C/C++-toolchain build-dependency compiles native code from build.rs.
         let manifest = crate_dir.join("Cargo.toml");
         if let Ok(toml) = std::fs::read_to_string(&manifest) {
-            for line in toml.lines() {
-                let t = line.trim();
-                if t.starts_with("links") && t.contains('=') {
-                    return Err(GateError(format!(
-                        "dependency-scan: `{crate_name}` declares `links` (native library); \
-                         submissions must be pure Rust"
-                    )));
-                }
+            if let Some(tool) = c_build_dependency(&toml) {
+                return Err(GateError(format!(
+                    "dependency-scan: `{crate_name}` has a `{tool}` build-dependency; \
+                     it would compile native (C/C++) code — dependencies must be pure Rust"
+                )));
             }
         }
-        let mut files = Vec::new();
-        collect_rs(&crate_dir, &mut files);
-        for file in files {
-            let src = std::fs::read_to_string(&file)
-                .map_err(|e| GateError(format!("dependency-scan: cannot read {}: {e}", file.display())))?;
-            scan_source(&file, &src)?; // reuses the FFI-token scan
+        // A prebuilt native artifact committed in the crate is a linkable blob
+        // that bypasses building from source.
+        if let Some(blob) = find_prebuilt_artifact(&crate_dir) {
+            return Err(GateError(format!(
+                "dependency-scan: `{crate_name}` ships a prebuilt native artifact ({}); \
+                 dependencies must be pure Rust source",
+                blob.display()
+            )));
         }
     }
     Ok(())
+}
+
+/// If a Cargo manifest declares a C/C++-toolchain crate as a build-dependency,
+/// return its name. Handles both the inline table form under
+/// `[build-dependencies]` and the `[build-dependencies.<name>]` table form.
+fn c_build_dependency(manifest: &str) -> Option<String> {
+    const TOOLS: &[&str] = &["cc", "gcc", "clang", "cmake", "bindgen", "nasm"];
+    let mut in_build_deps = false;
+    for line in manifest.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("[build-dependencies.") {
+            let name = rest.trim_end_matches(']').trim();
+            if TOOLS.contains(&name) {
+                return Some(name.to_string());
+            }
+            in_build_deps = false;
+            continue;
+        }
+        if t.starts_with('[') {
+            in_build_deps = t == "[build-dependencies]";
+            continue;
+        }
+        if in_build_deps && !t.is_empty() && !t.starts_with('#') {
+            let name = t
+                .split(|c| c == '=' || c == ' ' || c == '\t')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if TOOLS.contains(&name) {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Walk a crate directory for a committed prebuilt native artifact (a linkable
+/// object/library). Returns the first such path found, or `None`.
+fn find_prebuilt_artifact(dir: &Path) -> Option<PathBuf> {
+    const EXTS: &[&str] = &["a", "so", "dylib", "dll", "lib", "o", "obj"];
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+                if EXTS.contains(&ext) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Strip the trailing `-<version>` from a `cargo vendor` directory name, yielding
