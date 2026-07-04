@@ -133,11 +133,19 @@ pub fn scan_vendored_tree(vendor_dir: &Path) -> Result<(), GateError> {
     Ok(())
 }
 
+/// C/C++-toolchain crates whose presence as a build-dependency means the crate
+/// compiles native code from its build script.
+const C_BUILD_TOOLS: &[&str] = &["cc", "gcc", "clang", "cmake", "bindgen", "nasm"];
+
 /// If a Cargo manifest declares a C/C++-toolchain crate as a build-dependency,
-/// return its name. Handles both the inline table form under
-/// `[build-dependencies]` and the `[build-dependencies.<name>]` table form.
+/// return its name. Handles the inline form under `[build-dependencies]`, the
+/// `[build-dependencies.<name>]` table form (incl. target-conditional
+/// `[target.'cfg(...)'.build-dependencies...]`), dotted keys
+/// (`cc.workspace = true`), AND the renamed form
+/// (`mycc = { package = "cc" }` / a `package = "cc"` line under a table header),
+/// which would otherwise smuggle a C-toolchain crate under a benign key.
 fn c_build_dependency(manifest: &str) -> Option<String> {
-    const TOOLS: &[&str] = &["cc", "gcc", "clang", "cmake", "bindgen", "nasm"];
+    const TOOLS: &[&str] = C_BUILD_TOOLS;
     let mut in_build_deps = false;
     for line in manifest.lines() {
         let t = line.trim();
@@ -156,7 +164,9 @@ fn c_build_dependency(manifest: &str) -> Option<String> {
                 if TOOLS.contains(&name) {
                     return Some(name.to_string());
                 }
-                in_build_deps = false;
+                // Keep scanning: a `package = "cc"` line under this header would
+                // rename a C-toolchain crate to a benign key.
+                in_build_deps = true;
                 continue;
             }
         }
@@ -183,9 +193,39 @@ fn c_build_dependency(manifest: &str) -> Option<String> {
             if TOOLS.contains(&name) {
                 return Some(name.to_string());
             }
+            // A `package = "<tool>"` rename, in an inline table
+            // (`mycc = { package = "cc" }`) or as a line under a
+            // `[build-dependencies.<name>]` header (`package = "cc"`).
+            if let Some(pkg) = package_rename_to_tool(t, TOOLS) {
+                return Some(pkg);
+            }
         }
     }
     None
+}
+
+/// If a build-dependency line renames a C-toolchain crate via `package = "cc"`
+/// (etc.) — the crates.io rename mechanism — return that tool name. Matches a
+/// `package = "<tool>"` fragment anywhere in the line (covers both an inline
+/// table `mycc = { package = "cc", ... }` and a bare `package = "cc"` under a
+/// `[build-dependencies.<name>]` header).
+fn package_rename_to_tool(line: &str, tools: &[&str]) -> Option<String> {
+    let idx = line.find("package")?;
+    let after = line[idx + "package".len()..].trim_start();
+    let after = after.strip_prefix('=')?.trim_start();
+    // Value is a quoted string: "cc" or 'cc'.
+    let quote = after.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let rest = &after[1..];
+    let end = rest.find(quote)?;
+    let pkg = &rest[..end];
+    if tools.contains(&pkg) {
+        Some(pkg.to_string())
+    } else {
+        None
+    }
 }
 
 /// Walk a crate directory for a committed prebuilt native artifact (a linkable
@@ -355,19 +395,24 @@ fn license_check(repo_root: &Path, mode: Mode) -> Result<(), GateError> {
             }
         }
     }
+    // Check BOTH licenses and sources: `sources` enforces the crates.io-only
+    // policy (deny.toml `unknown-git = "deny"`, empty `allow-git`) so a tampered
+    // manifest cannot reintroduce a git/path source. `licenses` enforces the
+    // permissive allow-list. Both run against the frozen lockfile — no network.
     let output = Command::new("cargo")
         .arg("deny")
         .arg("--manifest-path")
         .arg(repo_root.join("Cargo.toml"))
         .arg("check")
         .arg("licenses")
+        .arg("sources")
         .current_dir(repo_root)
         .output()
         .map_err(|e| GateError(format!("license-check: failed to run cargo-deny: {e}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(GateError(format!(
-            "license-check: cargo-deny rejected the dependency licenses:\n{}",
+            "license-check: cargo-deny rejected the dependency licenses or sources:\n{}",
             stderr.trim()
         )));
     }

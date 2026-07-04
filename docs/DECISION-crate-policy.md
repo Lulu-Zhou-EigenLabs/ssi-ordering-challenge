@@ -183,3 +183,12 @@ The scored run is the layer that stops an untrusted submission's `order()` from 
 - The scored harness runs offline against the on-disk corpus and produces the score.
 
 This confirms the Task-7 → Task-9 dependency the earlier record flagged: the no-network scored run is real and it is the backstop the offline-model decision leans on.
+
+### Final whole-branch review — fixes applied
+The final review (opus, whole branch) returned "ready to merge with fixes" — no Critical, three Important accuracy/defense-in-depth gaps, all fixed:
+
+1. **`deny.toml [sources]` was dead config.** `license_check` ran only `cargo deny check licenses`, never `check sources` — so the git-source ban (Task 4) was documented but not enforced by the gate (the deps.toml parser closed the escape in practice, but the claimed layer was absent). Fixed: `license_check` now runs `cargo deny check licenses sources`. Verified `licenses ok, sources ok` on the real tree, and the full harness gate still passes end-to-end (score 1.0000).
+2. **`package = "cc"` build-dep rename evaded the C-toolchain scan.** `c_build_dependency` matched only the dependency KEY, so `mycc = { package = "cc" }` (or a `package = "cc"` line under `[build-dependencies.mycc]`) slipped through and would compile C on the stock runner. Fixed: added `package_rename_to_tool` and kept scanning inside renamed `[build-dependencies.<name>]` tables. Regression tests: `renamed_cc_build_dependency_inline_is_rejected`, `renamed_cc_build_dependency_table_header_is_rejected`.
+3. **The CI build step was `--offline` but not network-isolated** — a dependency's `build.rs` could still egress during compilation (mitigated only by the corpus being fetched after the build). Fixed: the `Setup` build now also runs under `sudo unshare -n` (a vendored `--offline --locked` build needs no network), so build-time `build.rs` egress is blocked too.
+
+The review confirmed the frozen contract, Invariant 2 (one code path), and the closed-form/exact-equivalence scorer tests are all intact; no finding was score-affecting or eval-exfiltrating. Remaining accepted residuals (all documented, low-value for an ordering competition): `find_prebuilt_artifact` matches final extension only (versioned `.so.1` etc. not expected in source crates); `is_plain_version` accepts semver-ish tokens Cargo rejects at resolve; the undeclared-C residual from the option-A decision.

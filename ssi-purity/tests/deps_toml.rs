@@ -137,6 +137,36 @@ fn workspace_inherited_cc_build_dependency_is_rejected() {
 }
 
 #[test]
+fn renamed_cc_build_dependency_inline_is_rejected() {
+    // A C-toolchain crate renamed via `package = "cc"` must not evade the scan
+    // by hiding under a benign key (inline-table form).
+    let root = std::env::temp_dir().join("ssi-vendor-cc-rename-inline");
+    let _ = std::fs::remove_dir_all(&root);
+    vwrite(
+        &root,
+        "foo-1.0/Cargo.toml",
+        "[package]\nname=\"foo\"\n[build-dependencies]\nmycc = { package = \"cc\", version = \"1.0\" }\n",
+    );
+    vwrite(&root, "foo-1.0/src/lib.rs", "pub fn f() {}\n");
+    assert!(scan_vendored_tree(&root).is_err());
+}
+
+#[test]
+fn renamed_cc_build_dependency_table_header_is_rejected() {
+    // The renamed form as a `package = "cc"` line under a
+    // `[build-dependencies.<name>]` table header must also be caught.
+    let root = std::env::temp_dir().join("ssi-vendor-cc-rename-table");
+    let _ = std::fs::remove_dir_all(&root);
+    vwrite(
+        &root,
+        "foo-1.0/Cargo.toml",
+        "[package]\nname=\"foo\"\n[build-dependencies.mycc]\npackage = \"cc\"\nversion = \"1.0\"\n",
+    );
+    vwrite(&root, "foo-1.0/src/lib.rs", "pub fn f() {}\n");
+    assert!(scan_vendored_tree(&root).is_err());
+}
+
+#[test]
 fn prebuilt_native_artifact_is_rejected() {
     // A committed linkable blob bypasses building from source.
     let root = std::env::temp_dir().join("ssi-vendor-blob");
