@@ -301,6 +301,8 @@ dependencies = [
 name = "ssi-ordering-challenge"
 version = "0.1.0"
 dependencies = [
+ "feral-amd",
+ "feral-ordering-core",
  "prototype-oracle",
  "ssi-purity",
  "ssi-scoring",
