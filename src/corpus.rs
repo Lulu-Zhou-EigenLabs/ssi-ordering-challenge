@@ -48,6 +48,14 @@ pub fn corpus_path() -> PathBuf {
     resolve_corpus_path_from(std::env::var(CORPUS_FILE_ENV).ok())
 }
 
+/// A Git LFS pointer file (what a clone without `git-lfs` leaves at a tracked
+/// path) begins with this line. Detecting it lets the harness print an
+/// actionable message instead of an opaque JSON parse error.
+fn is_lfs_pointer(text: &str) -> bool {
+    text.trim_start()
+        .starts_with("version https://git-lfs.github.com/spec/")
+}
+
 /// Load the corpus tagged with each entry's 0-based RAW line index in
 /// `patterns.jsonl` (blank lines counted), so the parent can hand the worker the
 /// exact index `ssi_scoring::load_pattern_jsonl_line` will resolve. Parsing
@@ -55,6 +63,18 @@ pub fn corpus_path() -> PathBuf {
 /// only recovers the raw indices of the non-blank lines it kept.
 pub fn corpus_indexed() -> Vec<(usize, String, Pattern)> {
     let path = corpus_path();
+    // If the corpus is an unresolved Git LFS pointer (clone without git-lfs),
+    // fail loudly with a fix, not a confusing parse error.
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        if is_lfs_pointer(&text) {
+            panic!(
+                "{} is an unresolved Git LFS pointer, not the corpus.\n\
+                 Install git-lfs and fetch the real file:\n\
+                 \x20   git lfs install && git lfs pull",
+                path.display()
+            );
+        }
+    }
     let corpus = match ssi_scoring::load_corpus_jsonl(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -120,5 +140,16 @@ mod tests {
             assert_eq!(one.col_ptr, pat.col_ptr, "col_ptr mismatch at raw line {idx}");
             assert_eq!(one.row_idx, pat.row_idx, "row_idx mismatch at raw line {idx}");
         }
+    }
+
+    #[test]
+    fn detects_git_lfs_pointer_text() {
+        let pointer = "version https://git-lfs.github.com/spec/v1\n\
+                       oid sha256:abc123\n\
+                       size 103879806\n";
+        assert!(is_lfs_pointer(pointer));
+        // A real JSONL corpus line is not a pointer.
+        assert!(!is_lfs_pointer(r#"{"n":4,"indptr":[0],"indices":[]}"#));
+        assert!(!is_lfs_pointer(""));
     }
 }
