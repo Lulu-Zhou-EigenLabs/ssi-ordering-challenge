@@ -17,19 +17,24 @@
 //!   4. recompute predicted flops and nnz(L) from the permutation with the
 //!      trusted scoring wrapper (Stage D) — your code never reports a number;
 //!
-//! then prints a per-matrix table, computes
+//! then prints a per-matrix table and a per-bucket breakdown, computes
 //!
-//!     score = geometric mean over the corpus of
-//!             flops(yours) / flops(AMD)             (lower is better)
+//!     score = weighted mean over size buckets of
+//!             geomean_within_bucket( flops(yours) / flops(AMD) )
+//!             (lower is better)
 //!
-//! and writes `score.json` plus one row of `results.tsv`. The tiebreak is the
-//! geomean of the fill ratio nnz(L)(yours)/nnz(L)(AMD).
+//! Matrices are bucketed by dimension n — lt_1k (n<1000), 1k_10k
+//! (1000≤n<10000), gt_10k (n≥10000) — with weights 0.30 / 0.30 / 0.40. Empty
+//! buckets are renormalized out (weights rescaled over populated buckets), so on
+//! a corpus that only populates one bucket the score is just that bucket's
+//! geomean. The tiebreak is the same weighted scheme over the fill ratio
+//! nnz(L)(yours)/nnz(L)(AMD).
 //!
-//! ONE SCORING CODE PATH (Invariant 2): both the baseline and your ordering are
-//! scored by `ssi_scoring::score`, the same function the private grader calls.
-//! The score is a pure function of (pattern, permutation), so the number printed
-//! here is IDENTICAL to the number the grader computes for the same ordering on
-//! the same matrices (exact-grader equivalence, proposal §6/§7).
+//! ONE SCORING CODE PATH (Invariant 2): the baseline and your ordering are both
+//! scored by `ssi_scoring::score`, the same function the private grader calls,
+//! and the aggregation above lives only here. The per-matrix score is a pure
+//! function of (pattern, permutation), so the number printed here is IDENTICAL
+//! to the number the grader computes for the same ordering on the same matrices.
 //!
 //! Any invalid permutation, panic, nondeterminism, cap violation, or
 //! purity/license failure makes the whole run FAIL — no partial credit, no
