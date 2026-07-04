@@ -56,6 +56,20 @@ fn is_lfs_pointer(text: &str) -> bool {
         .starts_with("version https://git-lfs.github.com/spec/")
 }
 
+/// Read at most the first ~256 bytes of `path` (a Git LFS pointer is well under
+/// that). Returns an empty string if the file is absent/unreadable, so the
+/// caller treats "no file" as "not a pointer" and falls through to the normal
+/// load path. Avoids slurping a ~99 MB corpus just to check its first line.
+fn read_prefix(path: &std::path::Path) -> String {
+    use std::io::Read as _;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let mut buf = [0u8; 256];
+    let n = f.read(&mut buf).unwrap_or(0);
+    String::from_utf8_lossy(&buf[..n]).into_owned()
+}
+
 /// Load the corpus tagged with each entry's 0-based RAW line index in
 /// `patterns.jsonl` (blank lines counted), so the parent can hand the worker the
 /// exact index `ssi_scoring::load_pattern_jsonl_line` will resolve. Parsing
@@ -64,16 +78,16 @@ fn is_lfs_pointer(text: &str) -> bool {
 pub fn corpus_indexed() -> Vec<(usize, String, Pattern)> {
     let path = corpus_path();
     // If the corpus is an unresolved Git LFS pointer (clone without git-lfs),
-    // fail loudly with a fix, not a confusing parse error.
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        if is_lfs_pointer(&text) {
-            panic!(
-                "{} is an unresolved Git LFS pointer, not the corpus.\n\
-                 Install git-lfs and fetch the real file:\n\
-                 \x20   git lfs install && git lfs pull",
-                path.display()
-            );
-        }
+    // fail loudly with a fix, not a confusing parse error. Only the first line
+    // matters (the pointer's `version` marker), so read a small prefix rather
+    // than slurping the whole corpus (~99 MB) just to check it.
+    if is_lfs_pointer(&read_prefix(&path)) {
+        panic!(
+            "{} is an unresolved Git LFS pointer, not the corpus.\n\
+             Install git-lfs and fetch the real file:\n\
+             \x20   git lfs install && git lfs pull",
+            path.display()
+        );
     }
     let corpus = match ssi_scoring::load_corpus_jsonl(&path) {
         Ok(c) => c,
