@@ -32,6 +32,13 @@ jobs:
     steps:
       - name: Checkout dispatched ref
         uses: actions/checkout@v4 # checks out the dispatched ref by default
+        with:
+          # The dev corpus is a Git LFS object. When no eval bucket is
+          # configured, the self-grade reads the committed dev corpus, so the
+          # runner must fetch LFS bytes (default is lfs: false → pointer file).
+          # When an eval bucket IS configured, grading uses SSI_CORPUS_FILE and
+          # never reads this file; fetching it is a small, harmless cost.
+          lfs: true
 
       - name: Setup toolchain
         uses: dtolnay/rust-toolchain@stable # honors the repo's rust-toolchain file

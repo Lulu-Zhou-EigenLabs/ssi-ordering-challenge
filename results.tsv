@@ -1,7 +1,8 @@
 # timestamp	status	score	fill_ratio	note
 # Append-only run log. The harness adds one row per `cargo run --release`:
-# Unix timestamp, status (OK/FAIL), score (geomean flop ratio vs feral-AMD,
-# lower is better, AMD = 1.00), fill_ratio (geomean nnz(L) ratio, the tiebreak),
-# and your --note. The row below is the shipped feral-amd starter on the in-repo
-# 13-matrix sample — it ties the AMD baseline at 1.00 as a correct starting point.
-1782160339	OK	1.000000	1.000000	starter: feral-amd ordering on dev sample (ties AMD baseline)
+# Unix timestamp, status (OK/FAIL), score (weighted mean of per-bucket geomean
+# flop ratios vs feral-AMD, lower is better, AMD = 1.00), fill_ratio (same
+# weighted scheme over nnz(L), the tiebreak), and your --note.
+# The row below is the shipped feral-amd starter on the full
+# 300-pattern dev corpus — it ties the AMD baseline at 1.00 as a correct start.
+1782160339	OK	1.000000	1.000000	starter: feral-amd ordering on full dev corpus (ties AMD baseline)

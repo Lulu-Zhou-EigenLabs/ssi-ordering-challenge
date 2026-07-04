@@ -67,13 +67,19 @@ You are given a Rust harness that, for each matrix in a development corpus
    harness derives everything else.
 5. **Scores** the run as
 
-   **score = geomean over matrices of flops(yours) / flops(AMD)**
+   **score = weighted mean over size buckets of the within-bucket geomean of
+   flops(yours) / flops(AMD)**
 
-   where `flops = Σⱼ cⱼ²` over the column counts cⱼ of L (a deterministic,
-   hardware-independent proxy proportional to the LDLᵀ operation count).
-   **Lower is better.** Ties break on the geometric mean of the fill ratio
-   nnz(L). The score is written to `score.json` and a row is appended to
-   `results.tsv`.
+   Matrices are bucketed by dimension n — **lt_1k** (n<1000), **1k_10k**
+   (1000≤n<10000), **gt_10k** (n≥10000) — with weights **0.30 / 0.30 / 0.40**.
+   The larger matrices carry the most weight because that is where real-world
+   value and algorithmic difficulty concentrate, and because a size-biased corpus
+   would otherwise let the small-matrix tail dominate. Within each bucket the
+   score is the geomean of `flops = Σⱼ cⱼ²` ratios (a deterministic,
+   hardware-independent proxy). Empty buckets are renormalized out. **Lower is
+   better.** Ties break on the same weighted scheme over the fill ratio nnz(L).
+   The score (and per-bucket detail) is written to `score.json`; a row is
+   appended to `results.tsv`.
 
 ### One scoring path, shared with the grader
 
@@ -112,40 +118,33 @@ There are no loopholes: the input is the pattern only (no values, no
 right-hand side, no answer to peek at), and the score is a pure function of
 your output, computed by code you cannot touch.
 
-### The corpus: in-repo sample vs. full download
+### The corpus
 
-`corpus/dev/patterns.jsonl` in this repo is a **small sample** (13 matrices,
-spanning the four families NLP / QCP / QP / QCQP plus one mid-size sparse
-case). Its job is to let you run the harness end to end immediately after
-cloning — it is **not** a representative tuning set, and scores on it are not
-competitive reference numbers (the sample is dominated by tiny near-clique
-matrices where ordering barely matters).
+`corpus/dev/patterns.jsonl` is the **full development corpus** (300 patterns,
+n up to ~340,000, spanning the families NLP / QCP / QP / QCQP). It is shipped
+in-repo via **Git LFS** (the file is ~99 MB), so after cloning it is simply
+present — no separate download step.
 
-The **full development corpus** (~279 patterns, n up to ~340,000) is published
-as a **GitHub release asset** (it is too large to commit, and a release keeps it
-off the git tree so clones stay small). Download the latest and verify it:
+**Install Git LFS before you clone** (or fetch after):
 
 ```sh
-BASE=https://github.com/Lulu-Zhou-EigenLabs/ssi-ordering-challenge/releases/latest/download
-curl -L -o patterns.jsonl        "$BASE/patterns.jsonl"
-curl -L -o patterns.jsonl.sha256 "$BASE/patterns.jsonl.sha256"
-shasum -a 256 -c patterns.jsonl.sha256   # Linux: sha256sum -c patterns.jsonl.sha256
+git lfs install
+# if you already cloned without git-lfs installed:
+git lfs pull
 ```
 
-The `/releases/latest/download/` URL always resolves to the newest release, so it
-keeps working as the corpus rotates per round; pin a specific round with
-`.../releases/download/<tag>/patterns.jsonl` instead. Then tune against the full
-distribution either by replacing `corpus/dev/patterns.jsonl`, or — without
-touching the in-repo file — by pointing the harness at the download:
+Without `git-lfs`, the working-tree file is a small text *pointer*, not JSONL,
+and the harness will stop with a message telling you to run `git lfs pull`.
+
+You can point the harness at a different corpus for one run with the
+`SSI_CORPUS_FILE` override (an absolute path outside the repo tree):
 
 ```sh
-# (run `bash scripts/prepare-build.sh` first if you haven't this session)
-SSI_CORPUS_FILE=$PWD/patterns.jsonl cargo run --release --offline --locked -- --note "full corpus"
+SSI_CORPUS_FILE=/path/to/other.jsonl cargo run --release --offline --locked -- --note "other corpus"
 ```
 
-`SSI_CORPUS_FILE` overrides the corpus path for one run; unset (the default), the
-harness grades the in-repo sample. See `corpus/dev/README.md`. The hidden
-evaluation corpus the grader ranks on is never published.
+Unset (the default), the harness grades the in-repo corpus. The competition's
+hidden evaluation corpus is never published.
 
 ### Reference numbers
 
@@ -181,15 +180,10 @@ regardless). If your tool supports scoped permissions or an allowlist, scoping
 edits to `src/ordering/` plus `cargo`/`git` is a convenient way to let it run
 the loop unattended.
 
-> **Before you start: download the full dev corpus.** The
-> `corpus/dev/patterns.jsonl` in this repo is only a tiny smoke-test sample —
-> scores on it are not competitive reference numbers. Download the full
-> development corpus from the latest **GitHub release**
-> ([`/releases/latest`](https://github.com/Lulu-Zhou-EigenLabs/ssi-ordering-challenge/releases/latest))
-> and either replace `corpus/dev/patterns.jsonl` with it or point the harness at
-> it via `SSI_CORPUS_FILE`, so you tune against the real distribution. See
-> "The corpus: in-repo sample vs. full download" above and `corpus/dev/README.md`
-> for the exact commands.
+> **Before you start: make sure Git LFS is installed** (`git lfs install`), so
+> `corpus/dev/patterns.jsonl` resolves to the real 300-pattern corpus rather
+> than an LFS pointer. If you cloned without it, run `git lfs pull`. See
+> "The corpus" above and `corpus/dev/README.md`.
 
 A headless run from the repo root looks like this (Claude Code shown; adapt the
 command to your agent):
