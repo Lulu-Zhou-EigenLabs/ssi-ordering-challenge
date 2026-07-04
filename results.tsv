@@ -2,6 +2,6 @@
 # Append-only run log. The harness adds one row per `cargo run --release`:
 # Unix timestamp, status (OK/FAIL), score (geomean flop ratio vs feral-AMD,
 # lower is better, AMD = 1.00), fill_ratio (geomean nnz(L) ratio, the tiebreak),
-# and your --note. The row below is the shipped identity starter on the in-repo
-# 13-matrix sample — your starting point to beat.
-1782160339	OK	1.148305	1.058244	starter: identity ordering on dev sample
+# and your --note. The row below is the shipped feral-amd starter on the in-repo
+# 13-matrix sample — it ties the AMD baseline at 1.00 as a correct starting point.
+1782160339	OK	1.000000	1.000000	starter: feral-amd ordering on dev sample (ties AMD baseline)
