@@ -150,12 +150,13 @@ evaluation corpus the grader ranks on is never published.
 ### Reference numbers
 
 Beating AMD (**score < 1.00**) is the game; the AMD baseline is anchored at
-**1.00** by definition. On the **full** dev corpus the natural/identity starter
-loses by *orders of magnitude* — it eliminates dense KKT constraint rows early
-and densifies the factor — and nested dissection (METIS-class) is the classic
-lead on the larger, grid-like patterns. On the tiny in-repo sample the spread
-is compressed (identity ≈ 1.15× AMD), which is exactly why the sample is for
-pipeline smoke-testing, not for ranking your idea — measure on the full corpus.
+**1.00** by definition. The shipped starter in `src/ordering/` calls
+`feral_amd::amd_order` — the same crate/version as the baseline — so it ties
+the baseline at **1.00**. It is a minimal, correct starting point to improve on:
+nested dissection (METIS-class) is the classic lead on larger, grid-like
+patterns. The natural/identity ordering (not shipped) would lose by orders of
+magnitude — it eliminates dense KKT constraint rows early and densifies the
+factor.
 
 > A note on scale: a textbook nested-dissection + *exact* minimum-degree
 > ordering has an O(n²)-per-pivot inner loop that **exceeds the 2 s cap on the
