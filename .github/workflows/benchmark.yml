@@ -52,9 +52,15 @@ jobs:
       # Stable step name "Setup": a failure here maps to setup_failed. Build from
       # the vendored snapshot with no network and the frozen lockfile — nothing
       # outside vendor/ can enter, so no closed-source or foreign code can be
-      # fetched at build time (docs/DECISION-crate-policy.md, Task 7).
+      # fetched at build time (docs/DECISION-crate-policy.md, Task 7). The build
+      # runs in a network namespace too: a vendored `--offline` build needs no
+      # network, and isolating it means a dependency's build.rs cannot phone home
+      # or exfiltrate even during compilation (the eval corpus is fetched AFTER
+      # this step, so it is not on disk here regardless).
       - name: Setup
-        run: cargo build --release --offline --locked
+        run: |
+          set -euo pipefail
+          sudo unshare -n -- bash -c 'ip link set lo up 2>/dev/null || true; exec cargo build --release --offline --locked'
 
       # Fetch today's hidden EVAL corpus to a temp path OUTSIDE the repo tree, so
       # the eval bytes never sit at a tracked path and can never be committed
