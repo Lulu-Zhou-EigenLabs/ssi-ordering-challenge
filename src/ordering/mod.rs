@@ -15,28 +15,28 @@
 //! a non-permissive license. Everything resolves from the frozen crates.io
 //! snapshot — no git or path sources. See `docs/DECISION-crate-policy.md`.
 //!
-//! ## Current approach: AMD (Approximate Minimum Degree)
+//! ## Current approach: feral-amd (Approximate Minimum Degree)
 //!
-//! `order()` runs the quotient-graph AMD heuristic in [`amd`] — the same family
-//! as the harness baseline. It greedily eliminates the (approximate-)minimum-
-//! degree variable, representing elimination cliques as compact "elements" so
-//! degree updates stay near-linear and the 2 s cap holds even on the dense KKT
-//! rows. See `memory/techniques/amd.md` for where it wins and loses, and
-//! `memory/` for what to try next (nested dissection is the open headroom).
+//! `order()` delegates to the [`feral_amd`] crate — declared in
+//! `src/ordering/deps.toml` — which runs the quotient-graph AMD heuristic.
+//! This is the same crate and version the harness baseline uses, so the
+//! shipped starter scores 1.00 (it ties the baseline); it is a minimal,
+//! correct starting point to improve on. See `memory/techniques/amd.md` for
+//! where AMD wins and loses, and `memory/` for what to try next (nested
+//! dissection is the open headroom).
 //!
-//! Everything under `src/ordering/` is yours: split it, add submodules, swap the
-//! algorithm, declare crates in `deps.toml` — as long as `order()` keeps its
-//! signature, stays deterministic, and stays pure Rust (no FFI / build scripts /
-//! native code, in this directory or any declared dependency's tree).
-
-mod amd;
+//! Everything under `src/ordering/` is yours: split it, add submodules, swap
+//! the algorithm, declare crates in `deps.toml` — as long as `order()` keeps
+//! its signature, stays deterministic, and stays pure Rust (no FFI / build
+//! scripts / native code, in this directory or any declared dependency's tree).
 
 use crate::Pattern;
 
 /// Return an elimination order for `pattern`.
 ///
-/// Delegates to the stdlib AMD implementation in [`amd::order`]. The result is a
-/// bijection of `0..pattern.n`; an empty pattern yields an empty permutation.
+/// Builds feral's `CscPattern` from the frozen `Pattern` contract input and
+/// runs `feral_amd::amd_order`. The result is a bijection of `0..pattern.n`;
+/// an empty pattern yields an empty permutation.
 pub fn order(pattern: &Pattern) -> Vec<usize> {
     // TEST-ONLY hook: when SSI_TEST_SLEEP_MS is set, sleep that long before
     // ordering. Inert unless the env var is present (never set in normal runs
@@ -48,7 +48,22 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
         }
     }
 
-    amd::order(pattern)
+    // feral_ordering_core's CscPattern is borrowed + i32-indexed. Convert the
+    // usize CSC buffers at this boundary (mirrors ssi_scoring::amd_baseline).
+    let col_ptr: Vec<i32> = pattern
+        .col_ptr
+        .iter()
+        .map(|&x| i32::try_from(x).expect("matrix too large for i32-indexed AMD"))
+        .collect();
+    let row_idx: Vec<i32> = pattern
+        .row_idx
+        .iter()
+        .map(|&x| i32::try_from(x).expect("matrix too large for i32-indexed AMD"))
+        .collect();
+    let pat = feral_ordering_core::CscPattern::new(pattern.n, &col_ptr, &row_idx)
+        .expect("malformed CscPattern for AMD (bug in Pattern invariants)");
+    let perm_i32 = feral_amd::amd_order(&pat).expect("feral AMD ordering failed");
+    perm_i32.into_iter().map(|x| x as usize).collect()
 }
 
 #[cfg(test)]
