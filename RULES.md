@@ -11,11 +11,13 @@ your local results predict your graded results.
 
 ## Goal
 
-Minimize the harness score: the geometric-mean flop ratio versus the AMD
-baseline, anchored at 1.00. Lower is better; beating AMD means a score < 1.00.
-Read your own score from `score.json` / `results.tsv` after a run — do not
-assume a reference number, because the corpus is rebaselined per round and
-absolute values shift.
+Minimize the harness score: the **weighted mean over size buckets of the
+within-bucket geomean flop ratio** versus the AMD baseline (buckets lt_1k /
+1k_10k / gt_10k by dimension n, weights 0.30 / 0.30 / 0.40; the AMD baseline is
+anchored at 1.00). Lower is better; beating AMD means a score < 1.00. Read your
+own score and per-bucket breakdown from `score.json` / `results.tsv` after a run
+— do not assume a reference number, because the corpus is rebaselined per round
+and absolute values shift.
 
 ## What you may edit
 
