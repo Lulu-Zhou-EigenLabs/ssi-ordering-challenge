@@ -156,8 +156,7 @@ fn main() {
         "matrix", "n", "nnz(A)", "flops(base)", "flops(yours)", "ratio", "time"
     );
 
-    let mut log_ratio_sum = 0.0_f64;
-    let mut log_fill_sum = 0.0_f64;
+    let mut buckets = [BucketAcc::default(); BUCKETS];
     let mut failed: Option<String> = None;
     let mut table = String::new();
 
@@ -221,8 +220,10 @@ fn main() {
         let yours = score(pat, &perm1);
         let ratio = yours.flops as f64 / base.flops as f64;
         let fill_ratio = yours.nnz_l as f64 / base.nnz_l as f64;
-        log_ratio_sum += ratio.ln();
-        log_fill_sum += fill_ratio.ln();
+        let b = size_bucket(pat.n);
+        buckets[b].log_ratio_sum += ratio.ln();
+        buckets[b].log_fill_sum += fill_ratio.ln();
+        buckets[b].count += 1;
 
         let line = format!(
             "{:<28} {:>8} {:>10} {:>14} {:>14} {:>8.3} {:>9}",
@@ -249,14 +250,64 @@ fn main() {
             std::process::exit(1);
         }
         None => {
-            let m = corpus.len() as f64;
-            let score_val = (log_ratio_sum / m).exp();
-            let fill = (log_fill_sum / m).exp();
-            println!("\nscore (geomean flop ratio vs AMD baseline, lower is better): {score_val:.4}");
-            println!("tiebreak (geomean fill ratio):                                {fill:.4}");
+            // Per-bucket geomeans (None for an empty bucket).
+            let flop_gms: [Option<f64>; BUCKETS] =
+                std::array::from_fn(|i| geomean(buckets[i].log_ratio_sum, buckets[i].count));
+            let fill_gms: [Option<f64>; BUCKETS] =
+                std::array::from_fn(|i| geomean(buckets[i].log_fill_sum, buckets[i].count));
+
+            let score_val = combine(&flop_gms, &BUCKET_WEIGHTS);
+            let fill = combine(&fill_gms, &BUCKET_WEIGHTS);
+
+            // Per-bucket breakdown table.
+            println!("\nper-bucket (geomean of ratio vs AMD, within bucket):");
+            println!(
+                "{:<8} {:>6} {:>16} {:>16}",
+                "bucket", "count", "flop_geomean", "fill_geomean"
+            );
+            for i in 0..BUCKETS {
+                let fmt = |g: Option<f64>| g.map_or_else(|| "—".to_string(), |v| format!("{v:.4}"));
+                println!(
+                    "{:<8} {:>6} {:>16} {:>16}",
+                    BUCKET_KEYS[i],
+                    buckets[i].count,
+                    fmt(flop_gms[i]),
+                    fmt(fill_gms[i]),
+                );
+            }
+
+            println!(
+                "\nscore (weighted mean of per-bucket geomean flop ratios, lower is better): {score_val:.4}"
+            );
+            println!("tiebreak (weighted mean of per-bucket geomean fill ratios):                    {fill:.4}");
+
+            // score.json — top-level `score` is what the grader ranks on;
+            // `metrics` is passthrough detail (Yukon captures it whole and shows
+            // it in the PR report). All three buckets are always listed; an empty
+            // bucket has count 0 and null geomeans.
+            let mut buckets_json = String::new();
+            for i in 0..BUCKETS {
+                let jf = |g: Option<f64>| g.map_or_else(|| "null".to_string(), |v| format!("{v:.6}"));
+                let sep = if i + 1 < BUCKETS { "," } else { "" };
+                let _ = write!(
+                    buckets_json,
+                    "\"{}\": {{ \"count\": {}, \"geomean_flop_ratio\": {}, \"geomean_fill_ratio\": {} }}{}",
+                    BUCKET_KEYS[i],
+                    buckets[i].count,
+                    jf(flop_gms[i]),
+                    jf(fill_gms[i]),
+                    sep,
+                );
+            }
+            let total: usize = buckets.iter().map(|b| b.count).sum();
             let json = format!(
-                "{{ \"score\": {score_val:.6}, \"metrics\": {{ \"geomean_flop_ratio\": {score_val:.6}, \"geomean_fill_ratio\": {fill:.6}, \"matrices\": {} }} }}\n",
-                corpus.len()
+                "{{ \"score\": {score_val:.6}, \"metrics\": {{ \
+                 \"geomean_flop_ratio\": {score_val:.6}, \
+                 \"geomean_fill_ratio\": {fill:.6}, \
+                 \"matrices\": {total}, \
+                 \"weights\": {{ \"lt_1k\": {:.2}, \"1k_10k\": {:.2}, \"gt_10k\": {:.2} }}, \
+                 \"buckets\": {{ {buckets_json} }} }} }}\n",
+                BUCKET_WEIGHTS[0], BUCKET_WEIGHTS[1], BUCKET_WEIGHTS[2],
             );
             std::fs::write("score.json", json).expect("write score.json");
             append_results(timestamp, "OK", score_val, fill, &note);
