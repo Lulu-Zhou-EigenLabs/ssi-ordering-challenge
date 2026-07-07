@@ -5,7 +5,7 @@
   "category": "optimization",
   "direction": "-",
   "editablePaths": ["src/ordering"],
-  "setupCommand": ["bash", "-lc", "cargo build --release"],
+  "setupCommand": ["bash", "-lc", "bash scripts/prepare-build.sh && cargo build --release"],
   "benchmarkCommand": ["bash", "-lc", "cargo run --release"],
   "scorePath": "score.json",
   "runner": { "provider": "github-actions", "workflow": "benchmark.yml" }
