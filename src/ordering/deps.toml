@@ -6,4 +6,9 @@
 # (enforced by the grader; see docs/DECISION-crate-policy.md).
 [dependencies]
 feral-amd = "0.2.1"
+feral-amf = "0.2.1"
+feral-metis = "0.2.1"
+feral-scotch = "0.2.1"
+feral-kahip = "0.2.1"
 feral-ordering-core = "0.2.1"
+feral = "0.11.0"
