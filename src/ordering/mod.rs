@@ -32,11 +32,17 @@
 
 use crate::Pattern;
 
+mod candidates;
+mod rcm;
+mod scoring;
+
 /// Return an elimination order for `pattern`.
 ///
-/// Builds feral's `CscPattern` from the frozen `Pattern` contract input and
-/// runs `feral_amd::amd_order`. The result is a bijection of `0..pattern.n`;
-/// an empty pattern yields an empty permutation.
+/// Best-of-k: generates several candidate orderings (AMD default + AMD variants
+/// + RCM, gated deterministically by size/density in [`candidates`]), scores
+/// each with feral's exact flop path in [`scoring`], and returns the cheapest.
+/// AMD default is always a candidate, so the result never scores worse than the
+/// AMD baseline. Deterministic; an empty pattern yields an empty permutation.
 pub fn order(pattern: &Pattern) -> Vec<usize> {
     // TEST-ONLY hook: when SSI_TEST_SLEEP_MS is set, sleep that long before
     // ordering. Inert unless the env var is present (never set in normal runs
@@ -48,22 +54,32 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
         }
     }
 
-    // feral_ordering_core's CscPattern is borrowed + i32-indexed. Convert the
-    // usize CSC buffers at this boundary (mirrors ssi_scoring::amd_baseline).
-    let col_ptr: Vec<i32> = pattern
-        .col_ptr
-        .iter()
-        .map(|&x| i32::try_from(x).expect("matrix too large for i32-indexed AMD"))
-        .collect();
-    let row_idx: Vec<i32> = pattern
-        .row_idx
-        .iter()
-        .map(|&x| i32::try_from(x).expect("matrix too large for i32-indexed AMD"))
-        .collect();
-    let pat = feral_ordering_core::CscPattern::new(pattern.n, &col_ptr, &row_idx)
-        .expect("malformed CscPattern for AMD (bug in Pattern invariants)");
-    let perm_i32 = feral_amd::amd_order(&pat).expect("feral AMD ordering failed");
-    perm_i32.into_iter().map(|x| x as usize).collect()
+    let n = pattern.n;
+    if n == 0 {
+        return Vec::new();
+    }
+
+    // Build feral's scoring pattern once; reuse across candidates.
+    let base = scoring::to_feral_pattern(pattern);
+
+    // Generate candidates (amd_default is always index 0) and keep the cheapest
+    // by (flops, nnz_l). Strict `<` keeps the earliest candidate on ties, so
+    // amd_default wins ties → never regresses below 1.0.
+    let mut best_perm: Option<Vec<usize>> = None;
+    let mut best_cost: Option<scoring::Cost> = None;
+    for cand in candidates::candidates(pattern) {
+        let cost = scoring::score(&base, &cand.perm);
+        let better = match best_cost {
+            None => true,
+            Some(b) => (cost.flops, cost.nnz_l) < (b.flops, b.nnz_l),
+        };
+        if better {
+            best_cost = Some(cost);
+            best_perm = Some(cand.perm);
+        }
+    }
+
+    best_perm.expect("at least the amd_default candidate is always present")
 }
 
 #[cfg(test)]
@@ -183,5 +199,48 @@ mod tests {
         }
         let pat = Pattern::from_edges(12, &edges);
         assert_bijection(&order(&pat), 12);
+    }
+
+    /// Best-of-k must never do worse than AMD default alone, on any matrix.
+    #[test]
+    fn never_worse_than_amd_default() {
+        use super::scoring::{score, to_feral_pattern};
+        let n = 120;
+        let mut edges = Vec::new();
+        for v in 0..n - 1 {
+            edges.push((v, v + 1));
+        }
+        for v in 0..n - 11 {
+            edges.push((v, v + 11));
+        }
+        let p = Pattern::from_edges(n, &edges);
+        let base = to_feral_pattern(&p);
+
+        let chosen = order(&p);
+        let chosen_cost = score(&base, &chosen);
+
+        // amd_default is candidates()[0].
+        let amd = super::candidates::candidates(&p);
+        let amd_cost = score(&base, &amd[0].perm);
+
+        assert!(
+            (chosen_cost.flops, chosen_cost.nnz_l) <= (amd_cost.flops, amd_cost.nnz_l),
+            "best-of-k {chosen_cost:?} worse than amd_default {amd_cost:?}"
+        );
+    }
+
+    /// Determinism gate: two runs on a larger matrix are byte-identical.
+    #[test]
+    fn best_of_k_is_deterministic_large() {
+        let n = 2000;
+        let mut edges = Vec::new();
+        for v in 0..n - 1 {
+            edges.push((v, v + 1));
+        }
+        for v in 0..n - 40 {
+            edges.push((v, v + 40));
+        }
+        let p = Pattern::from_edges(n, &edges);
+        assert_eq!(order(&p), order(&p));
     }
 }
