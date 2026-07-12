@@ -6,3 +6,7 @@
 # The row below is the shipped feral-amd starter on the full
 # 300-pattern dev corpus — it ties the AMD baseline at 1.00 as a correct start.
 1782160339	OK	1.000000	1.000000	starter: feral-amd ordering on full dev corpus (ties AMD baseline)
+1783881119	OK	0.924552	0.979498	baseline: current best-of AMD/AMF/METIS
+1783881367	OK	0.916590	0.979658	expanded portfolio (instrumented)
+1783881652	OK	0.918640	0.980404	portfolio v2: amf+metis+scotch(+2seeds)+kahip, tiered gates
+1783881842	OK	0.918640	0.980404	portfolio v2: best-of AMD/AMF/METIS/SCOTCH(+2 seeds)/KaHIP, tiered (n,nnz) gates
