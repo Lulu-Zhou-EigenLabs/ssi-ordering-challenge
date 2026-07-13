@@ -32,9 +32,10 @@
 //!
 //! ONE SCORING CODE PATH (Invariant 2): the baseline and your ordering are both
 //! scored by `ssi_scoring::score`, the same function the private grader calls,
-//! and the aggregation above lives only here. The per-matrix score is a pure
-//! function of (pattern, permutation), so the number printed here is IDENTICAL
-//! to the number the grader computes for the same ordering on the same matrices.
+//! and the aggregation lives in ssi_scoring::aggregate, shared with the reference-line tools.
+//! The per-matrix score is a pure function of (pattern, permutation), so the number
+//! printed here is IDENTICAL to the number the grader computes for the same ordering
+//! on the same matrices.
 //!
 //! Any invalid permutation, panic, nondeterminism, cap violation, or
 //! purity/license failure makes the whole run FAIL — no partial credit, no
@@ -52,7 +53,10 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use ssi_scoring::score;
+use ssi_scoring::{
+    combine, geomean, score, size_bucket, validate_permutation, BucketAcc, BUCKETS,
+    BUCKET_KEYS, BUCKET_WEIGHTS,
+};
 
 // Re-export the contract type at the crate root so contestant code under
 // src/ordering/ imports it as `crate::Pattern`. The type is defined in
@@ -69,63 +73,6 @@ pub use ssi_scoring::Pattern;
 /// gates a submission on the server is exactly this constant — local and graded
 /// runs use the identical 2 s cap by construction (Invariant 2).
 const TIME_CAP_PER_MATRIX: Duration = Duration::from_secs(2);
-
-/// Number of size buckets the score is aggregated over.
-const BUCKETS: usize = 3;
-/// Stable metric keys for the buckets, in index order (see `size_bucket`).
-const BUCKET_KEYS: [&str; BUCKETS] = ["lt_1k", "1k_10k", "gt_10k"];
-/// Weights per bucket. Real-world value and algorithmic difficulty concentrate
-/// in the large matrices, so `gt_10k` carries the most weight. Empty buckets are
-/// renormalized out in `combine`, so these need not be pre-normalized.
-const BUCKET_WEIGHTS: [f64; BUCKETS] = [0.30, 0.30, 0.40];
-
-/// Classify a matrix by its dimension `n` into a bucket index (half-open):
-/// `n < 1000 → 0` (lt_1k), `1000 ≤ n < 10000 → 1` (1k_10k), `n ≥ 10000 → 2` (gt_10k).
-fn size_bucket(n: usize) -> usize {
-    if n < 1_000 {
-        0
-    } else if n < 10_000 {
-        1
-    } else {
-        2
-    }
-}
-
-/// Per-bucket accumulator: sums of log-ratios (for the geomean) and a count.
-#[derive(Default, Clone, Copy)]
-struct BucketAcc {
-    log_ratio_sum: f64,
-    log_fill_sum: f64,
-    count: usize,
-}
-
-/// Geometric mean from a sum of natural logs and a count. `None` for an empty
-/// bucket (no matrices), so `combine` can renormalize it out.
-fn geomean(log_sum: f64, count: usize) -> Option<f64> {
-    if count == 0 {
-        None
-    } else {
-        Some((log_sum / count as f64).exp())
-    }
-}
-
-/// Weighted mean of the per-bucket geomeans, renormalizing the weights over the
-/// populated (`Some`) buckets. Returns `NaN` if every bucket is empty.
-fn combine(geomeans: &[Option<f64>; BUCKETS], weights: &[f64; BUCKETS]) -> f64 {
-    let mut num = 0.0_f64;
-    let mut den = 0.0_f64;
-    for i in 0..BUCKETS {
-        if let Some(g) = geomeans[i] {
-            num += weights[i] * g;
-            den += weights[i];
-        }
-    }
-    if den == 0.0 {
-        f64::NAN
-    } else {
-        num / den
-    }
-}
 
 fn main() {
     // Worker mode: the ONLY process that runs contestant order(). Loads one
@@ -350,24 +297,6 @@ fn worker(args: &[String]) -> i32 {
     }
 }
 
-/// Stage C analog: the returned permutation must be a true bijection of 0..n.
-fn validate_permutation(perm: &[usize], n: usize) -> Result<(), String> {
-    if perm.len() != n {
-        return Err(format!("permutation has length {}, expected {}", perm.len(), n));
-    }
-    let mut seen = vec![false; n];
-    for &v in perm {
-        if v >= n {
-            return Err(format!("index {} out of range 0..{}", v, n));
-        }
-        if seen[v] {
-            return Err(format!("index {} appears more than once", v));
-        }
-        seen[v] = true;
-    }
-    Ok(())
-}
-
 /// Resolve the repo root so the gate finds src/ordering/ and deny.toml whether
 /// the binary is launched from the repo root or elsewhere. Uses CARGO_MANIFEST_DIR
 /// at compile time (the harness package dir), falling back to ".".
@@ -404,64 +333,3 @@ fn parse_note() -> String {
 // `_` reference so `Pattern` import is used even if the type is only named in
 // closures above; keeps the contract type visible at the harness boundary.
 const _: fn(&Pattern) -> Vec<usize> = ordering::order;
-
-#[cfg(test)]
-mod scoring_tests {
-    use super::*;
-
-    #[test]
-    fn size_bucket_boundaries() {
-        assert_eq!(size_bucket(0), 0);
-        assert_eq!(size_bucket(999), 0);
-        assert_eq!(size_bucket(1000), 1);
-        assert_eq!(size_bucket(9999), 1);
-        assert_eq!(size_bucket(10000), 2);
-        assert_eq!(size_bucket(340_000), 2);
-    }
-
-    #[test]
-    fn geomean_empty_is_none() {
-        assert_eq!(geomean(0.0, 0), None);
-    }
-
-    #[test]
-    fn geomean_matches_exp_mean() {
-        // two ratios 0.5 and 0.8 → geomean = sqrt(0.4) ≈ 0.632455
-        let ls = 0.5_f64.ln() + 0.8_f64.ln();
-        let g = geomean(ls, 2).unwrap();
-        assert!((g - (0.4_f64).sqrt()).abs() < 1e-12, "g = {g}");
-    }
-
-    #[test]
-    fn combine_all_populated_matches_worked_example() {
-        // user's example: 0.8, 0.9, 0.7 with weights 0.3, 0.3, 0.4
-        let gms = [Some(0.8), Some(0.9), Some(0.7)];
-        let got = combine(&gms, &BUCKET_WEIGHTS);
-        let want = 0.30 * 0.8 + 0.30 * 0.9 + 0.40 * 0.7;
-        assert!((got - want).abs() < 1e-12, "got = {got}, want = {want}");
-    }
-
-    #[test]
-    fn combine_one_empty_renormalizes() {
-        // lt_1k empty → weighted mean over {1k_10k: 0.9, gt_10k: 0.7} with
-        // weights {0.3, 0.4} renormalized by 0.7.
-        let gms = [None, Some(0.9), Some(0.7)];
-        let got = combine(&gms, &BUCKET_WEIGHTS);
-        let want = (0.30 * 0.9 + 0.40 * 0.7) / (0.30 + 0.40);
-        assert!((got - want).abs() < 1e-12, "got = {got}, want = {want}");
-    }
-
-    #[test]
-    fn combine_only_one_populated_is_that_geomean() {
-        // dev-corpus case: only lt_1k populated → score == its geomean.
-        let gms = [Some(0.873), None, None];
-        let got = combine(&gms, &BUCKET_WEIGHTS);
-        assert!((got - 0.873).abs() < 1e-12, "got = {got}");
-    }
-
-    #[test]
-    fn combine_all_empty_is_nan() {
-        let gms = [None, None, None];
-        assert!(combine(&gms, &BUCKET_WEIGHTS).is_nan());
-    }
-}
