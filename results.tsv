@@ -6,3 +6,13 @@
 # The row below is the shipped feral-amd starter on the full
 # 300-pattern dev corpus — it ties the AMD baseline at 1.00 as a correct start.
 1782160339	OK	1.000000	1.000000	starter: feral-amd ordering on full dev corpus (ties AMD baseline)
+1784069485	OK	0.924552	0.979498	baseline run: shipped best-of AMD/AMF/METIS
+1784070208	OK	0.914684	0.976397	tiered best-of: +dense-alpha variants, +metis seeds, +scotch, +kahip (tiny)
+1784070401	OK	0.914684	0.976397	tiered best-of, tightened envelopes (worst local order() ~0.4s -> target <0.3s)
+1784070538	OK	0.913053	0.974928	micro tier: broad seed/mode diversity for lt_1k bucket
+1784070716	OK	0.912169	0.974779	wider micro diversity + tiny tier raised to n<10k/nnz<60k
+1784070883	OK	0.912445	0.974877	gate micro tier by nnz<20k (dense small patterns cost ~0.3s through full set)
+1784071015	OK	0.914531	0.974869	lazy AMD scoring; AMF nnz cap 700k; micro dense gate 20k
+1784071137	OK	0.912445	0.974877	restore AMF nnz cap 1.3M (700k cut lost gt_10k wins); keep lazy AMD scoring
+1784071210	FAIL	NaN	NaN	time_cap test: slow
+1784071310	OK	0.912445	0.974877	time_cap test: normal
