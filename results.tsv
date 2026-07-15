@@ -16,3 +16,9 @@
 1784071137	OK	0.912445	0.974877	restore AMF nnz cap 1.3M (700k cut lost gt_10k wins); keep lazy AMD scoring
 1784071210	FAIL	NaN	NaN	time_cap test: slow
 1784071310	OK	0.912445	0.974877	time_cap test: normal
+1784147627	OK	0.912445	0.974877	analysis run: capture per-matrix table
+1784147944	OK	0.909529	0.973113	scotch tier n<60k/nnz<160k; small tier + AMD/AMF param variants
+1784148421	OK	0.910176	0.973240	re-budget: scotch band 70k, extra seeds only nnz<30k, param variants cheap tier
+1784148821	OK	0.910176	0.973240	tighten METIS band to 150k, tiny tier 25k for cap safety
+1784149065	FAIL	NaN	NaN	time_cap test: slow
+1784149213	OK	0.910176	0.973240	time_cap test: normal

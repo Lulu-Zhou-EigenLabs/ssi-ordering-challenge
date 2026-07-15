@@ -67,3 +67,46 @@ patterns); partitioner seed diversity mops up small-bucket ties.
 ## Links
 - Techniques: [amd](../techniques/amd.md), [nested-dissection](../techniques/nested-dissection.md)
 - Prior: [0001-amd-quotient-graph](0001-amd-quotient-graph.md)
+
+---
+
+## Addendum 2026-07-15 — Scotch tier + band re-budget (0.9124 → 0.9102)
+
+### What changed
+- **Scotch got its own tier** (n<60k, previously only n<15k): the 1k_10k
+  bucket dropped 0.9364 → 0.9274 — the single biggest mid-bucket move so far.
+  Scotch's coarsening/compression profile is genuinely complementary to METIS.
+- Bands re-derived from per-candidate µs/nnz measurements (`bench_candidates`
+  at the 120k–200k nnz band): AMD ≈0.2–2, AMF ≈0.3–3, METIS ≈2.3, Scotch ≈2.8,
+  KaHIP ≈6.5 µs/nnz. Extra partitioner *seeds* re-pay full cost, so they were
+  cut from nnz<80k down to nnz<30k with **zero score loss** (their wins were
+  all in the small range anyway).
+- Final bands: METIS nnz<150k; Scotch nnz<70k (n<60k); param variants nnz<80k
+  (n<15k); extra seeds nnz<30k; KaHIP/tiny nnz<25k; micro unchanged.
+
+### Timing caveat (IMPORTANT for the next session)
+Wall-time measurements this session were taken on a box running 6 competing
+CPU-bound processes (load ≈9.6 on 8 cores) — the 0.5–0.8 s "slowest order()"
+figures are contention-inflated, likely ≈2x the quiet numbers. The envelope
+математик from µs/nnz says ≈0.4 s worst-case at band tops on quiet hardware
+(≈2 s at a 5x-slower grader — AT the cap, not comfortably under). Before
+widening ANY band, re-measure on quiet hardware; if the grader is believed
+slower than 3x local, consider narrowing METIS to nnz<120k.
+
+### Per-bucket trail
+| change | lt_1k | 1k_10k | gt_10k | score |
+|---|---|---|---|---|
+| 0002 base (Jul 14) | 0.9449 | 0.9364 | 0.8701 | 0.9124 |
+| +Scotch n<60k/160k | 0.9449 | 0.9274 | 0.8696 | 0.9095 |
+| re-budget (safety) | 0.9449 | 0.9274 | 0.8712 | 0.9102 |
+
+The 0.9095→0.9102 give-back is the price of the cap-safety margin (gams05
+lost its Scotch win when the band tightened: 0.794→0.920 there). Accepted:
+a FAIL on one hidden matrix voids the whole run.
+
+### Still-open leads (mid bucket)
+60/108 mid matrices remain at ratio 1.0. The biggest stuck flop masses:
+crudeoil_lee2_06 (n=6.4k), meanvar-orl400 pair (nnz≈172k — above every
+partitioner band; dense QP covariance blocks), knp5-4x, watercontamination.
+The meanvar pair is interesting: nnz/n ≈ 35, too dense for ND to win anyway.
+A quotient-graph ND hybrid with a density bail-out stays the right next move.

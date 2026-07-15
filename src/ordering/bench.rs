@@ -63,8 +63,16 @@ mod bench_tests {
                 ssi_scoring::pattern_from_jsonl_line(&line).expect("parse");
             let n = pat.n;
             let nnz = pat.nnz();
-            // Only the large tail we care about.
-            if nnz < 200_000 {
+            // The band we are currently attributing (env-tunable).
+            let lo: usize = std::env::var("BENCH_NNZ_LO")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(200_000);
+            let hi: usize = std::env::var("BENCH_NNZ_HI")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(usize::MAX);
+            if nnz < lo || nnz > hi {
                 continue;
             }
             let col_ptr_i32: Vec<i32> = pat.col_ptr.iter().map(|&x| x as i32).collect();

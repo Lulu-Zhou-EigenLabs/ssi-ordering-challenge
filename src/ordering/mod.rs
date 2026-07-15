@@ -87,7 +87,7 @@ const AMF_MAX_NNZ: usize = 1_300_000;
 /// of magnitude below that scale, plus an n cap as defense-in-depth. Within this
 /// envelope the worst measured METIS child time is ≈0.13 s (≈0.65 s at 5x).
 const METIS_MAX_N: usize = 120_000;
-const METIS_MAX_NNZ: usize = 200_000;
+const METIS_MAX_NNZ: usize = 150_000;
 
 /// Cheap-diversity tier: AMD/AMF dense-threshold variants. These are the same
 /// near-linear quotient-graph loop as the baseline (no structural volatility),
@@ -95,17 +95,28 @@ const METIS_MAX_NNZ: usize = 200_000;
 const VARIANT_MAX_N: usize = 150_000;
 const VARIANT_MAX_NNZ: usize = 250_000;
 
-/// Small tier: extra METIS seeds/params + Scotch. All partitioner runs here are
-/// tens of ms locally (measured over the dev corpus); bounded well below any
-/// observed blow-up scale.
+/// Scotch tier: Scotch (default options) adds wins METIS misses on mid-size
+/// structured patterns. Measured cost ≈2.8 µs/nnz. Where it overlaps METIS
+/// (≈2.3 µs/nnz) both run, so the combined band is capped at nnz<70k to keep
+/// the whole candidate stack ≤~0.35 s local at the band top.
+const SCOTCH_MAX_N: usize = 60_000;
+const SCOTCH_MAX_NNZ: usize = 70_000;
+
+/// Small tier: cheap AMD/AMF parameter variants (µs–ms at this scale).
 const SMALL_MAX_N: usize = 15_000;
 const SMALL_MAX_NNZ: usize = 80_000;
+
+/// Extra-seed tier: second/third partitioner seeds. Each extra seed re-pays the
+/// full partitioner cost, so this is confined to nnz<30k where a seed is
+/// ≤~70 ms.
+const SEEDS_MAX_N: usize = 15_000;
+const SEEDS_MAX_NNZ: usize = 30_000;
 
 /// Tiny tier: the most expensive per-nnz diversity (KaHIP, more METIS params).
 /// KaHIP measured up to ~0.7 s at nnz≈258k, so it is confined to genuinely
 /// small problems where it is a few ms.
 const TINY_MAX_N: usize = 10_000;
-const TINY_MAX_NNZ: usize = 60_000;
+const TINY_MAX_NNZ: usize = 25_000;
 
 /// Micro tier: sub-1k problems (the lt_1k score bucket). Every candidate here
 /// is ~1 ms, so we afford broad seed/mode diversity across all families.
@@ -219,10 +230,45 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
         });
     }
 
-    // Small tier: seed/param diversity for the partitioners. Each extra run is
-    // tens of ms at this scale; the candidate set stays a pure function of
-    // (n, nnz) so determinism holds.
+    // Scotch (default options) — finds wins METIS misses; complementary
+    // coarsening/compression profile. Band capped so METIS+Scotch together
+    // stay ≤~0.35 s local at the top.
+    if n < SCOTCH_MAX_N && nnz < SCOTCH_MAX_NNZ {
+        consider(&|| feral_scotch::scotch_order(&core));
+    }
+
+    // Small tier: cheap AMD/AMF parameter variants — near-linear cost, so they
+    // are safe wherever the base AMD/AMF run.
     if n < SMALL_MAX_N && nnz < SMALL_MAX_NNZ {
+        consider(&|| {
+            feral_amd::amd_order_opts(
+                &core,
+                &feral_amd::AmdOptions {
+                    aggressive: true,
+                    dense_alpha: 4.0,
+                },
+            )
+            .map(|(p, _)| p)
+        });
+        consider(&|| {
+            feral_amf::amf_order_opts(&core, &feral_amf::AmfOptions { dense_alpha: 4.0 })
+                .map(|(p, _)| p)
+        });
+        consider(&|| {
+            feral_amd::amd_order_opts(
+                &core,
+                &feral_amd::AmdOptions {
+                    aggressive: false,
+                    dense_alpha: 10.0,
+                },
+            )
+            .map(|(p, _)| p)
+        });
+    }
+
+    // Extra partitioner seeds — each re-pays the full partitioner cost, so
+    // confined to small nnz.
+    if n < SEEDS_MAX_N && nnz < SEEDS_MAX_NNZ {
         consider(&|| {
             let opts = feral_metis::MetisOptions {
                 seed: 2,
@@ -238,7 +284,13 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
             };
             feral_metis::metis_order_full(&core, &opts).map(|(p, _, _)| p)
         });
-        consider(&|| feral_scotch::scotch_order(&core));
+        consider(&|| {
+            let opts = feral_scotch::ScotchOptions {
+                seed: 1,
+                ..feral_scotch::ScotchOptions::default()
+            };
+            feral_scotch::scotch_order_full(&core, &opts).map(|(p, _, _)| p)
+        });
     }
 
     // Tiny tier: KaHIP and an aggressive METIS config — the most expensive
