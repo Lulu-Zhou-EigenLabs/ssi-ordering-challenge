@@ -350,9 +350,10 @@ fn scan_source(file: &Path, src: &str) -> Result<(), GateError> {
 /// comment starts, and string-delimiter characters inside a comment are ignored —
 /// otherwise a `/*` in a string (or a `"` in a comment) could hide forbidden code
 /// from the scanner. Normal (`"..."`), byte (`b"..."`), and raw (`r#"..."#`)
-/// strings are handled; char literals are left as-is (a `"` or `/*` inside a char
-/// literal is not valid Rust that we need to model, and treating `'` as a string
-/// delimiter would mishandle lifetimes like `&'a T`).
+/// strings are handled, as are char literals (`'x'`, `'"'`, `b'x'`): a char
+/// literal is consumed whole so a `"` inside it does not open a phantom string,
+/// while a bare `'` that is NOT a complete char literal (a lifetime like `&'a T`)
+/// is left as an ordinary byte.
 fn strip_comments(src: &str) -> String {
     let bytes = src.as_bytes();
     let mut out = String::with_capacity(src.len());
@@ -443,6 +444,30 @@ fn strip_comments(src: &str) -> String {
             i += len;
             continue;
         }
+        // Char literal `'x'` / `'\n'` / `'\''`, optionally a byte-char `b'x'`.
+        // Consumed whole so a `"` inside it (`'"'`) does not open a string, and
+        // its closing `'` is not mistaken for a lifetime tick. A bare `'` that is
+        // NOT a complete char literal (a lifetime like `'a`) falls through and is
+        // copied as an ordinary byte.
+        {
+            let quote_at = if b == b'b' && bytes.get(i + 1) == Some(&b'\'') {
+                Some(i + 1)
+            } else if b == b'\'' {
+                Some(i)
+            } else {
+                None
+            };
+            if let Some(q) = quote_at {
+                if let Some(clen) = char_literal_len(&bytes[q..]) {
+                    let total = (q - i) + clen;
+                    for k in 0..total {
+                        out.push(bytes[i + k] as char);
+                    }
+                    i += total;
+                    continue;
+                }
+            }
+        }
         if b == b'"' {
             in_string = true;
             out.push('"');
@@ -476,6 +501,76 @@ fn raw_string_start(bytes: &[u8]) -> Option<(usize, usize)> {
         Some((hashes, i + 1))
     } else {
         None
+    }
+}
+
+/// If `bytes` starts with a char literal (`'x'`, `'\n'`, `'\''`, `'\u{1f}'`),
+/// return its total byte length including both quotes. Returns `None` when the
+/// leading `'` opens a lifetime/label (`'a`, `'static`) rather than a char
+/// literal — the presence of a closing `'` after exactly one char (or one escape)
+/// is what distinguishes the two, exactly as Rust's own grammar does. The caller
+/// handles a `b'...'` byte-char prefix by pointing us at the `'`.
+fn char_literal_len(bytes: &[u8]) -> Option<usize> {
+    if bytes.first() != Some(&b'\'') {
+        return None;
+    }
+    let mut i = 1;
+    if bytes.get(i) == Some(&b'\\') {
+        // Escaped: `\n`, `\'`, `\\`, `\xHH`, `\u{...}`, etc.
+        i += 1;
+        match bytes.get(i) {
+            Some(b'u') => {
+                i += 1;
+                if bytes.get(i) != Some(&b'{') {
+                    return None;
+                }
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'}' {
+                    i += 1;
+                }
+                if bytes.get(i) != Some(&b'}') {
+                    return None;
+                }
+                i += 1;
+            }
+            Some(b'x') => {
+                i += 1;
+                let mut k = 0;
+                while k < 2 && bytes.get(i).is_some_and(|b| b.is_ascii_hexdigit()) {
+                    i += 1;
+                    k += 1;
+                }
+            }
+            Some(_) => i += 1, // single-char escape
+            None => return None,
+        }
+    } else {
+        // A single (possibly multi-byte UTF-8) char, then the closing `'` must
+        // follow immediately — otherwise this is a lifetime, not a char literal.
+        match bytes.get(i) {
+            Some(&lead) => i += utf8_len(lead),
+            None => return None,
+        }
+    }
+    if bytes.get(i) == Some(&b'\'') {
+        Some(i + 1)
+    } else {
+        None
+    }
+}
+
+/// Byte length of the UTF-8 code point whose leading byte is `lead`.
+fn utf8_len(lead: u8) -> usize {
+    if lead < 0x80 {
+        1
+    } else if lead >> 5 == 0b110 {
+        2
+    } else if lead >> 4 == 0b1110 {
+        3
+    } else if lead >> 3 == 0b11110 {
+        4
+    } else {
+        1 // continuation/invalid byte: treat as 1 so we never over-consume
     }
 }
 
@@ -700,6 +795,38 @@ mod tests {
         // (which would be a false NEGATIVE hiding nothing here, but proves the
         // stripper resumes scanning normal code after the string closes).
         let src = "let s = \"/* not a comment */\";\nfn ok() {}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn double_quote_char_literal_does_not_desync_string_state() {
+        // A char literal holding `"` (valid Rust) must NOT flip the scanner into
+        // string mode, or it would swallow the following block comment and then
+        // falsely flag the `extern` prose inside it.
+        let src = "let q = '\"';\n/* we avoid extern \"C\" here */\nfn ok() {}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn byte_char_literal_with_quote_does_not_desync() {
+        // Same for a byte-char literal `b'"'`.
+        let src = "let q = b'\"';\n/* mentions proc_macro in prose */\nfn ok() {}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn lifetime_tick_is_not_treated_as_char_literal() {
+        // A lifetime `'a` is a bare `'` NOT opening a char literal; code after it
+        // (here a real extern block) must still be scanned.
+        let src = "struct S<'a>(&'a u8);\nextern \"C\" { fn evil(); }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn escaped_quote_char_literal_does_not_desync() {
+        // The char literal `'\''` contains an escaped single quote; it must be
+        // consumed whole so the following comment is still stripped.
+        let src = "let q = '\\'';\n/* extern \"C\" in prose */\nfn ok() {}\n";
         assert!(scan_source(Path::new("x.rs"), src).is_ok());
     }
 
