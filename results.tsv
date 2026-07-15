@@ -22,3 +22,4 @@
 1784148821	OK	0.910176	0.973240	tighten METIS band to 150k, tiny tier 25k for cap safety
 1784149065	FAIL	NaN	NaN	time_cap test: slow
 1784149213	OK	0.910176	0.973240	time_cap test: normal
+1784150868	OK	0.910176	0.973240	post-rebase verification on latest harness
