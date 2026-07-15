@@ -52,6 +52,7 @@ use std::fmt::Write as _;
 use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::Path;
+use std::process::ExitCode;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ssi_scoring::{
@@ -75,12 +76,12 @@ pub use ssi_scoring::Pattern;
 /// runs use the identical 2 s cap by construction (Invariant 2).
 const TIME_CAP_PER_MATRIX: Duration = Duration::from_secs(2);
 
-fn main() {
+fn main() -> ExitCode {
     // Worker mode: the ONLY process that runs contestant order(). Loads one
     // pattern by raw line index, runs order(), writes the permutation, exits.
     let raw_args: Vec<String> = std::env::args().collect();
     if raw_args.get(1).map(String::as_str) == Some("--worker") {
-        std::process::exit(worker(&raw_args[2..]));
+        return ExitCode::from(worker(&raw_args[2..]) as u8);
     }
 
     let note = parse_note();
@@ -91,7 +92,7 @@ fn main() {
         println!("RUN FAILED (Stage A — purity/license): {e}");
         let ts = now();
         append_results(ts, "FAIL", f64::NAN, f64::NAN, &note);
-        std::process::exit(1);
+        return ExitCode::FAILURE;
     }
 
     let corpus_file = corpus::corpus_path();
@@ -101,7 +102,7 @@ fn main() {
             "RUN FAILED: no patterns found at {}. Run from the repo root.",
             corpus_file.display()
         );
-        std::process::exit(1);
+        return ExitCode::FAILURE;
     }
 
     println!(
@@ -115,8 +116,10 @@ fn main() {
 
     // Resolve our own executable + a scratch dir for worker perm files.
     let exe = std::env::current_exe().expect("locate harness executable");
-    let scratch = std::env::temp_dir().join(format!("ssi-harness-{}", std::process::id()));
-    std::fs::create_dir_all(&scratch).expect("create scratch dir");
+    let scratch = failsafe::ScratchDir(
+        std::env::temp_dir().join(format!("ssi-harness-{}", std::process::id())),
+    );
+    std::fs::create_dir_all(scratch.path()).expect("create scratch dir");
     // The worker must load from the SAME corpus file the parent just indexed —
     // otherwise the parent's raw line index would resolve a different matrix in
     // the worker. corpus_path() honors $SSI_CORPUS_FILE (the grader's eval seam).
@@ -124,13 +127,23 @@ fn main() {
     let cap = watchdog::CapConfig { time_cap: TIME_CAP_PER_MATRIX, poll: std::time::Duration::from_millis(10) };
 
     for (line_index, name, pat) in &corpus {
-        // --- AMD baseline (trusted, in-process) ---
-        let base_perm = ssi_scoring::amd_baseline(pat);
-        let base = score(pat, &base_perm);
+        // --- AMD baseline (trusted, in-process) — guarded so a feral panic
+        // or an i32-overflow-sized pattern becomes a recorded FAIL, not a
+        // process abort that leaks scratch (issue #19). ---
+        let base = match failsafe::catch(std::panic::AssertUnwindSafe(|| {
+            let base_perm = ssi_scoring::amd_baseline(pat);
+            score(pat, &base_perm)
+        })) {
+            Ok(b) => b,
+            Err(msg) => {
+                failed = Some(format!("{name}: trusted baseline/score panicked — {msg}"));
+                break;
+            }
+        };
 
         // --- contestant ordering: capped subprocess, run twice ---
         let run_once = |tag: &str| -> Result<Vec<usize>, String> {
-            let out_perm = scratch.join(format!("{line_index}-{tag}.bin"));
+            let out_perm = scratch.path().join(format!("{line_index}-{tag}.bin"));
             let _ = std::fs::remove_file(&out_perm);
             let mut cmd = std::process::Command::new(&exe);
             cmd.arg("--worker").arg(&jsonl_path).arg(line_index.to_string()).arg(&out_perm);
@@ -169,8 +182,14 @@ fn main() {
             break;
         }
 
-        // --- trusted scoring (Stage D), same path as the grader ---
-        let yours = score(pat, &perm1);
+        // --- trusted scoring (Stage D), same path as the grader — guarded ---
+        let yours = match failsafe::catch(std::panic::AssertUnwindSafe(|| score(pat, &perm1))) {
+            Ok(s) => s,
+            Err(msg) => {
+                failed = Some(format!("{name}: trusted scoring panicked — {msg}"));
+                break;
+            }
+        };
         let ratio = yours.flops as f64 / base.flops as f64;
         let fill_ratio = yours.nnz_l as f64 / base.nnz_l as f64;
         let b = size_bucket(pat.n);
@@ -192,15 +211,19 @@ fn main() {
         let _ = writeln!(table, "{line}");
     }
 
-    let _ = std::fs::remove_dir_all(&scratch);
-
     let timestamp = now();
 
     match failed {
         Some(reason) => {
             println!("\nRUN FAILED: {reason}");
-            append_results(timestamp, "FAIL", f64::NAN, f64::NAN, &note);
-            std::process::exit(1);
+            append_results(
+                timestamp,
+                "FAIL",
+                f64::NAN,
+                f64::NAN,
+                &failsafe::compose_note(&reason, &note),
+            );
+            ExitCode::FAILURE
         }
         None => {
             // Per-bucket geomeans (None for an empty bucket).
@@ -264,6 +287,7 @@ fn main() {
             );
             std::fs::write("score.json", json).expect("write score.json");
             append_results(timestamp, "OK", score_val, fill, &note);
+            ExitCode::SUCCESS
         }
     }
 }
