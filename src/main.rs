@@ -92,19 +92,22 @@ fn main() -> ExitCode {
     // --- Stage A analog: purity & license gate, before any scoring. ---
     let repo_root = repo_root();
     if let Err(e) = purity::check(&repo_root) {
-        println!("RUN FAILED (Stage A — purity/license): {e}");
+        let reason = format!("Stage A — purity/license: {e}");
+        println!("RUN FAILED ({reason})");
         let ts = now();
-        append_results(ts, "FAIL", f64::NAN, f64::NAN, &note);
+        append_results(ts, "FAIL", f64::NAN, f64::NAN, &failsafe::compose_note(&reason, &note));
         return ExitCode::FAILURE;
     }
 
     let corpus_file = corpus::corpus_path();
     let corpus = corpus::corpus_indexed();
     if corpus.is_empty() {
-        println!(
-            "RUN FAILED: no patterns found at {}. Run from the repo root.",
+        let reason = format!(
+            "no patterns found at {}. Run from the repo root.",
             corpus_file.display()
         );
+        println!("RUN FAILED: {reason}");
+        append_results(now(), "FAIL", f64::NAN, f64::NAN, &failsafe::compose_note(&reason, &note));
         return ExitCode::FAILURE;
     }
 
