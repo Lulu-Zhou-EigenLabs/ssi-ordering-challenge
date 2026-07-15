@@ -293,14 +293,17 @@ fn purity_scan(ordering_dir: &Path) -> Result<(), GateError> {
     Ok(())
 }
 
-/// Scan a single source string for forbidden constructs. Comment-stripping is
-/// deliberately conservative: we strip `//` line comments so an explanatory
-/// comment mentioning `extern` does not trip the gate, but we do NOT try to
-/// parse Rust — any real use of these constructs in code trips it.
+/// Scan a single source string for forbidden constructs. We strip BOTH `//` line
+/// comments and `/* */` block/doc comments first, so prose that merely mentions
+/// `extern`/`proc_macro` (a very common case at public scale) does not trip the
+/// gate. String literals are tracked while stripping so a comment marker inside a
+/// string does not start a "comment" — that avoids a bypass where forbidden code
+/// hides after a `/*` embedded in a string. We do NOT try to fully parse Rust:
+/// any real use of these constructs in code still trips the gate.
 fn scan_source(file: &Path, src: &str) -> Result<(), GateError> {
     let where_ = file.display();
-    for (lineno, raw) in src.lines().enumerate() {
-        let line = strip_line_comment(raw);
+    let stripped = strip_comments(src);
+    for (lineno, line) in stripped.lines().enumerate() {
         let trimmed = line.trim();
         let hit = |what: &str| {
             Err(GateError(format!(
@@ -323,7 +326,10 @@ fn scan_source(file: &Path, src: &str) -> Result<(), GateError> {
         if contains_attr(trimmed, "link") && (trimmed.contains("link(") || trimmed.contains("link =")) {
             return hit("a `#[link]` attribute");
         }
-        if trimmed.contains("proc_macro") {
+        // Match `proc_macro` only as a whole identifier, so a benign identifier
+        // that merely CONTAINS it (e.g. `count_proc_macro_mentions`,
+        // `proc_macro_helpers`) does not trip the gate.
+        if contains_word(trimmed, "proc_macro") {
             return hit("proc-macro machinery");
         }
         if trimmed.contains("include!") {
@@ -338,14 +344,167 @@ fn scan_source(file: &Path, src: &str) -> Result<(), GateError> {
     Ok(())
 }
 
-/// Strip a `//` line comment (ignoring `//` inside string literals is overkill
-/// here; the constructs we scan for would never legitimately appear in a string
-/// in a real ordering, and a false positive fails loud rather than silently).
-fn strip_line_comment(line: &str) -> &str {
-    match line.find("//") {
-        Some(i) => &line[..i],
-        None => line,
+/// Strip `//` line comments and `/* */` block comments (both nest, per Rust) from
+/// a whole source string, preserving newlines so line numbers reported for real
+/// hits stay accurate. Comment markers INSIDE string literals are not treated as
+/// comment starts, and string-delimiter characters inside a comment are ignored —
+/// otherwise a `/*` in a string (or a `"` in a comment) could hide forbidden code
+/// from the scanner. Normal (`"..."`), byte (`b"..."`), and raw (`r#"..."#`)
+/// strings are handled; char literals are left as-is (a `"` or `/*` inside a char
+/// literal is not valid Rust that we need to model, and treating `'` as a string
+/// delimiter would mishandle lifetimes like `&'a T`).
+fn strip_comments(src: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    // Nesting depth of `/* */` block comments (0 = not in a block comment).
+    let mut block_depth = 0usize;
+    // Inside a `"..."`/`b"..."` string literal (not raw).
+    let mut in_string = false;
+    // Inside a raw string `r#"..."#`; `raw_hashes` is the number of `#` that must
+    // precede the closing `"` to end it.
+    let mut in_raw = false;
+    let mut raw_hashes = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if block_depth > 0 {
+            // Only comment markers matter inside a block comment.
+            if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                block_depth += 1;
+                i += 2;
+            } else if b == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                block_depth -= 1;
+                i += 2;
+            } else {
+                if b == b'\n' {
+                    out.push('\n'); // keep line numbering
+                }
+                i += 1;
+            }
+            continue;
+        }
+        if in_raw {
+            out.push(b as char);
+            if b == b'"' {
+                // A raw string ends at `"` followed by exactly `raw_hashes` `#`.
+                let mut j = i + 1;
+                let mut seen = 0;
+                while j < bytes.len() && bytes[j] == b'#' && seen < raw_hashes {
+                    seen += 1;
+                    j += 1;
+                }
+                if seen == raw_hashes {
+                    for _ in 0..raw_hashes {
+                        out.push('#');
+                    }
+                    in_raw = false;
+                    i = j;
+                    continue;
+                }
+            }
+            i += 1;
+            continue;
+        }
+        if in_string {
+            out.push(b as char);
+            if b == b'\\' && i + 1 < bytes.len() {
+                // Escaped char (e.g. `\"`): copy it verbatim so it can't close
+                // the string.
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        // Not in a comment or string: look for the start of one.
+        if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            // Line comment: skip to end of line, keeping the newline.
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            block_depth = 1;
+            i += 2;
+            continue;
+        }
+        // Raw string start: `r"`, `r#"`, `br"`, `br#"`, etc.
+        if let Some((hashes, len)) = raw_string_start(&bytes[i..]) {
+            in_raw = true;
+            raw_hashes = hashes;
+            for k in 0..len {
+                out.push(bytes[i + k] as char);
+            }
+            i += len;
+            continue;
+        }
+        if b == b'"' {
+            in_string = true;
+            out.push('"');
+            i += 1;
+            continue;
+        }
+        out.push(b as char);
+        i += 1;
     }
+    out
+}
+
+/// If `bytes` starts with a raw-string opener (`r"`, `r#"`, `r##"`, …, optionally
+/// prefixed by `b` for a raw byte string), return `(number_of_hashes, prefix_len)`
+/// where `prefix_len` covers everything through the opening `"`. Otherwise `None`.
+fn raw_string_start(bytes: &[u8]) -> Option<(usize, usize)> {
+    let mut i = 0;
+    if i < bytes.len() && bytes[i] == b'b' {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'r' {
+        return None;
+    }
+    i += 1;
+    let mut hashes = 0;
+    while i < bytes.len() && bytes[i] == b'#' {
+        hashes += 1;
+        i += 1;
+    }
+    if i < bytes.len() && bytes[i] == b'"' {
+        Some((hashes, i + 1))
+    } else {
+        None
+    }
+}
+
+/// True if `hay` contains `word` as a whole identifier — i.e. not immediately
+/// preceded or followed by an identifier character (`[A-Za-z0-9_]`). Used so a
+/// forbidden token matches only as its own identifier, never as a substring of a
+/// larger benign name.
+fn contains_word(hay: &str, word: &str) -> bool {
+    let hb = hay.as_bytes();
+    let wb = word.as_bytes();
+    if wb.is_empty() {
+        return false;
+    }
+    let mut start = 0;
+    while let Some(rel) = hay[start..].find(word) {
+        let idx = start + rel;
+        let before_ok = idx == 0 || !is_ident_byte(hb[idx - 1]);
+        let after = idx + wb.len();
+        let after_ok = after >= hb.len() || !is_ident_byte(hb[after]);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = idx + 1;
+    }
+    false
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b == b'_' || b.is_ascii_alphanumeric()
 }
 
 /// True if `line` contains an attribute named `name`, e.g. `#[no_mangle]` or
@@ -459,6 +618,88 @@ mod tests {
     fn comment_mentioning_extern_is_allowed() {
         // A comment explaining we must not use extern should not trip the gate.
         let src = "// we never call into extern \"C\" code here\nfn ok() {}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn block_comment_mentioning_extern_is_allowed() {
+        // Issue #16 repro: a block comment naming `extern` must not trip the gate.
+        let src = "/* NOTE: we deliberately avoid extern \"C\" in this module */\npub fn unused_demo() {}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn multiline_block_comment_with_extern_is_allowed() {
+        // A block comment spanning lines and mentioning forbidden tokens is fine;
+        // line numbers past it must still be reported correctly for real hits.
+        let src = "/*\n extern \"C\"\n proc_macro\n*/\nfn ok() {}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn doc_comment_mentioning_proc_macro_is_allowed() {
+        // Outer/inner doc comments (`///`, `//!`) are line comments and stripped.
+        let src = "/// Uses no proc_macro machinery whatsoever.\npub fn f() {}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn identifier_containing_proc_macro_is_allowed() {
+        // Issue #16 repro: an identifier containing `proc_macro` is benign.
+        let src = "pub fn count_proc_macro_mentions() -> usize { 0 }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn identifier_containing_extern_is_allowed() {
+        // `extern` as a substring of a larger identifier is not FFI.
+        let src = "fn my_extern_helper() {}\nlet external = 1;\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn real_proc_macro_use_is_rejected() {
+        // A genuine `proc_macro` token (not a substring) must still be caught.
+        let src = "use proc_macro;\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn extern_without_space_is_rejected() {
+        // `extern"C"` (no space before the ABI string) is still FFI.
+        let src = "extern\"C\" { fn evil(); }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn code_after_inline_block_comment_is_still_scanned() {
+        // Stripping a block comment must not blind the scanner to real code that
+        // follows it on the same line.
+        let src = "/* ok */ extern \"C\" { fn evil(); }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn block_comment_marker_inside_string_does_not_hide_code() {
+        // Untrusted-code bypass guard: a `/*` inside a string literal must NOT be
+        // treated as a comment start, or forbidden code after it would be hidden.
+        let src = "let s = \"/*\";\nextern \"C\" { fn evil(); }\nlet e = \"*/\";\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn comment_marker_inside_raw_string_does_not_hide_code() {
+        // Same guard for raw strings, where `\"` does not escape the delimiter.
+        let src = "let s = r#\"/*\"#;\nuse proc_macro;\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn string_containing_comment_open_is_not_treated_as_comment() {
+        // A benign string that merely contains `/*` must not swallow later lines
+        // (which would be a false NEGATIVE hiding nothing here, but proves the
+        // stripper resumes scanning normal code after the string closes).
+        let src = "let s = \"/* not a comment */\";\nfn ok() {}\n";
         assert!(scan_source(Path::new("x.rs"), src).is_ok());
     }
 
