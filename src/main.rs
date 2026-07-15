@@ -42,6 +42,7 @@
 //! silent fallback.
 
 mod corpus;
+mod failsafe;
 mod ordering;
 mod perm_io;
 mod purity;
