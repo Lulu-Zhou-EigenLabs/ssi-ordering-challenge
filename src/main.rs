@@ -39,7 +39,10 @@
 //!
 //! Any invalid permutation, panic, nondeterminism, cap violation, or
 //! purity/license failure makes the whole run FAIL — no partial credit, no
-//! silent fallback.
+//! silent fallback. A panic in the trusted in-process baseline/score path
+//! (feral internal error or an oversized pattern) is caught and recorded as a
+//! FAIL row whose note carries the reason; the scratch dir is disposed on
+//! every exit path.
 
 mod corpus;
 mod failsafe;

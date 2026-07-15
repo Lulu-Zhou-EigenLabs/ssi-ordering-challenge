@@ -60,7 +60,7 @@ ssi-ordering-challenge/            (THE PUBLIC REPO / contestant template)
 │       └── loader.rs     pattern_from_jsonl_line() — the one corpus parser, shared by harness & grader
 ├── prototype-oracle/     dev-only INDEPENDENT scorer, for the cross-check test
 ├── corpus/dev/           the shipped development corpus (patterns.jsonl sample)
-├── results.tsv           append-only run log (timestamp, status, score, fill, note)
+├── results.tsv           append-only run log (timestamp, status, score, fill, note; FAIL rows carry the reason in note)
 ├── score.json            latest score, machine-readable
 └── docs/HARNESS-DESIGN.md
 ```
