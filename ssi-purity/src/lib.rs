@@ -302,43 +302,59 @@ fn purity_scan(ordering_dir: &Path) -> Result<(), GateError> {
 /// any real use of these constructs in code still trips the gate.
 fn scan_source(file: &Path, src: &str) -> Result<(), GateError> {
     let where_ = file.display();
-    let stripped = strip_comments(src);
-    for (lineno, line) in stripped.lines().enumerate() {
+    // Two views of the source with comments removed: `kw` also blanks string
+    // interiors (so a keyword inside a string is not matched); `paths` keeps
+    // string contents (so `include!("../x")` still shows its `..` escape).
+    let kw = strip_comments(src, true);
+    let paths = strip_comments(src, false);
+    let hit = |lineno: usize, what: &str| {
+        Err(GateError(format!(
+            "purity: {where_}:{} uses {what}, which is forbidden in submissions (no foreign-function interface / non-Rust escape)",
+            lineno + 1
+        )))
+    };
+    for (lineno, line) in kw.lines().enumerate() {
         let trimmed = line.trim();
-        let hit = |what: &str| {
-            Err(GateError(format!(
-                "purity: {where_}:{} uses {what}, which is forbidden in submissions (no foreign-function interface / non-Rust escape)",
-                lineno + 1
-            )))
-        };
-        // extern block or extern fn (FFI). `extern crate` is also disallowed:
-        // submissions are stdlib-only and may not name external crates.
-        if trimmed.starts_with("extern ")
-            || trimmed.contains(" extern ")
-            || trimmed.contains("extern\"")
-            || trimmed.contains("extern \"")
-        {
-            return hit("an `extern` block / FFI");
+        // `extern`, `no_mangle`, and `proc_macro` are single contiguous tokens
+        // (whitespace can never split a keyword/identifier), so a whole-word match
+        // per line catches them however the SURROUNDING tokens are spread across
+        // lines — closing the block-comment / line-split evasions where the ABI
+        // string or the `#[ ]` brackets sat on another line. `extern` is a
+        // reserved keyword (never a valid identifier), so word-matching it cannot
+        // false-positive on a benign name; `no_mangle`/`proc_macro` are matched on
+        // identifier boundaries so `no_mangle_helper` / `count_proc_macro` pass.
+        if contains_word(trimmed, "extern") {
+            return hit(lineno, "an `extern` block / FFI");
         }
-        if contains_attr(trimmed, "no_mangle") {
-            return hit("`#[no_mangle]`");
+        if contains_word(trimmed, "no_mangle") {
+            return hit(lineno, "`#[no_mangle]`");
         }
-        if contains_attr(trimmed, "link") && (trimmed.contains("link(") || trimmed.contains("link =")) {
-            return hit("a `#[link]` attribute");
-        }
-        // Match `proc_macro` only as a whole identifier, so a benign identifier
-        // that merely CONTAINS it (e.g. `count_proc_macro_mentions`,
-        // `proc_macro_helpers`) does not trip the gate.
         if contains_word(trimmed, "proc_macro") {
-            return hit("proc-macro machinery");
+            return hit(lineno, "proc-macro machinery");
         }
-        if trimmed.contains("include!") {
-            // include! is allowed only for paths inside src/ordering/. We
-            // cannot resolve the literal robustly without parsing, so we reject
-            // any include! pointing outside via "../" — the only way to escape.
-            if trimmed.contains("..") {
-                return hit("an `include!` of a path outside src/ordering/");
-            }
+        // `#[link(...)]` / `#[link_name = ...]`. Unlike the keywords above, `link`
+        // is a legal identifier (`let link = ...`, `x.link()`), so it is matched
+        // only in attribute form — `#[` and the `link(`/`link =`/`link_name`
+        // fragment on the same line. A `#[link]` split across physical lines is
+        // NOT caught here; that is acceptable because `#[link]` is inert without an
+        // `extern` block (now caught robustly above) and the no-native-link build
+        // (Task 7) backstops any actual native linking.
+        if contains_attr(trimmed, "link")
+            && (trimmed.contains("link(")
+                || trimmed.contains("link =")
+                || trimmed.contains("link_name"))
+        {
+            return hit(lineno, "a `#[link]` attribute");
+        }
+    }
+    // `include!` is allowed only for paths inside src/ordering/. We cannot resolve
+    // the literal robustly without parsing, so we reject any `include!` whose line
+    // also contains `..` — the only way to escape the directory. This runs on the
+    // string-preserving view so the `..` inside the path literal is visible.
+    for (lineno, line) in paths.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.contains("include!") && trimmed.contains("..") {
+            return hit(lineno, "an `include!` of a path outside src/ordering/");
         }
     }
     Ok(())
@@ -354,7 +370,19 @@ fn scan_source(file: &Path, src: &str) -> Result<(), GateError> {
 /// literal is consumed whole so a `"` inside it does not open a phantom string,
 /// while a bare `'` that is NOT a complete char literal (a lifetime like `&'a T`)
 /// is left as an ordinary byte.
-fn strip_comments(src: &str) -> String {
+///
+/// String INTERIORS are additionally blanked (each interior byte becomes a space,
+/// newlines preserved), so a forbidden token appearing only inside a string
+/// literal — e.g. `return Err("extern calls are not allowed")` — is not matched.
+/// This is a false-positive fix, not a bypass: string contents are data, never
+/// code, so blanking them can only remove non-code tokens. Char-literal interiors
+/// are left as-is (at most one char/escape — they cannot spell a forbidden word).
+///
+/// `blank_strings` controls that interior blanking: `true` for the keyword scan
+/// (so a token inside a string is not matched), `false` for the `include!` scan,
+/// which must read the string PATH to see a `..` escape — blanking it would hide
+/// the escape and open a bypass.
+fn strip_comments(src: &str, blank_strings: bool) -> String {
     let bytes = src.as_bytes();
     let mut out = String::with_capacity(src.len());
     let mut i = 0;
@@ -385,7 +413,6 @@ fn strip_comments(src: &str) -> String {
             continue;
         }
         if in_raw {
-            out.push(b as char);
             if b == b'"' {
                 // A raw string ends at `"` followed by exactly `raw_hashes` `#`.
                 let mut j = i + 1;
@@ -395,6 +422,7 @@ fn strip_comments(src: &str) -> String {
                     j += 1;
                 }
                 if seen == raw_hashes {
+                    out.push('"'); // keep closing delimiter
                     for _ in 0..raw_hashes {
                         out.push('#');
                     }
@@ -403,21 +431,29 @@ fn strip_comments(src: &str) -> String {
                     continue;
                 }
             }
+            // Interior byte: blank it (data, not code) when requested, always
+            // preserving newlines.
+            out.push(blank_or_keep(b, blank_strings));
             i += 1;
             continue;
         }
         if in_string {
-            out.push(b as char);
             if b == b'\\' && i + 1 < bytes.len() {
-                // Escaped char (e.g. `\"`): copy it verbatim so it can't close
-                // the string.
-                out.push(bytes[i + 1] as char);
+                // Escaped pair (e.g. `\"`): keep it whole so it can't close the
+                // string; blank both bytes when blanking so content isn't matched.
+                out.push(blank_or_keep(b'\\', blank_strings));
+                out.push(blank_or_keep(bytes[i + 1], blank_strings));
                 i += 2;
                 continue;
             }
             if b == b'"' {
+                out.push('"'); // keep closing delimiter
                 in_string = false;
+                i += 1;
+                continue;
             }
+            // Interior byte: blank it when requested, preserving newlines.
+            out.push(blank_or_keep(b, blank_strings));
             i += 1;
             continue;
         }
@@ -478,6 +514,18 @@ fn strip_comments(src: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// A string-interior byte becomes a space when `blank` is set (newlines always
+/// kept so line numbering survives); otherwise it is copied verbatim.
+fn blank_or_keep(b: u8, blank: bool) -> char {
+    if b == b'\n' {
+        '\n'
+    } else if blank {
+        ' '
+    } else {
+        b as char
+    }
 }
 
 /// If `bytes` starts with a raw-string opener (`r"`, `r#"`, `r##"`, …, optionally
@@ -690,6 +738,52 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extern_split_from_abi_by_block_comment_is_rejected() {
+        // Review finding #1 (regression): a block comment between `extern` and its
+        // ABI string must NOT hide the extern. Compiles as real FFI.
+        let src = "extern /* c\nc */ \"C\" { fn getenv(n: *const u8) -> *const u8; }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn extern_split_across_lines_is_rejected() {
+        // Review finding #2a: `extern` and `"C"` on separate physical lines.
+        let src = "extern\n\"C\" { fn evil(); }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn no_mangle_split_across_lines_is_rejected() {
+        // Review finding #2b: `#[ no_mangle ]` broken across physical lines.
+        let src = "#[\nno_mangle\n]\npub fn exported() {}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn forbidden_token_inside_string_literal_is_allowed() {
+        // Review finding #3: a forbidden word appearing only inside a string is
+        // data, not code, and must not trip the gate.
+        let src = "pub fn f() -> &'static str { \"extern proc_macro no_mangle\" }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn no_mangle_as_identifier_substring_is_allowed() {
+        // The word-boundary match must still let benign identifiers pass.
+        let src = "fn no_mangle_helper() {}\nlet link_count = 1;\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn include_escape_hidden_in_string_is_still_rejected() {
+        // The `include!` check reads the string-preserving view, so a `..` escape
+        // inside the path literal is still seen even though the keyword scan blanks
+        // string interiors.
+        let src = "include!(\"../../../etc/passwd\");\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
 
     #[test]
     fn clean_source_passes() {
