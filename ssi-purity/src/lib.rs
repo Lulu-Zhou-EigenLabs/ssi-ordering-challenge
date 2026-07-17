@@ -347,6 +347,27 @@ fn scan_source(file: &Path, src: &str) -> Result<(), GateError> {
             return hit(lineno, "a `#[link]` attribute");
         }
     }
+    // Inline assembly emits hand-written machine code inline, a non-Rust escape
+    // exactly like FFI. The `asm!`/`global_asm!`/`naked_asm!` (and legacy
+    // `llvm_asm!`) macros are the only way to do this in source, so we reject any
+    // invocation of them: the macro NAME as a word (any path prefix like
+    // `core::arch::` matches on the word boundary) followed by the invocation shape
+    // `!` + delimiter `(`/`[`/`{`. Requiring that shape lets the legal identifier
+    // `asm` (`let asm = 5;`, `asm != 5`) pass while a real call is caught. This
+    // scans the WHOLE comment-stripped source, not line-by-line, because Rust
+    // treats whitespace — including newlines — between the path, the `!`, and the
+    // delimiter as insignificant, so a call split across physical lines
+    // (`asm\n!(...)`) is still a call and must not evade the gate (cf. the
+    // line-split evasions closed for extern/no_mangle in #16). This does NOT follow
+    // an `as`-rename import (`use core::arch::asm as a; a!(...)`) — token scanning
+    // cannot; the no-C-compiler build (Task 7) and network-isolated run (Task 9)
+    // are the real boundary, as issue #18 notes.
+    for mac in ["asm", "global_asm", "naked_asm", "llvm_asm"] {
+        if let Some(off) = find_macro_call(&kw, mac) {
+            let lineno = kw[..off].bytes().filter(|&b| b == b'\n').count();
+            return hit(lineno, "inline assembly (`asm!`/`global_asm!`)");
+        }
+    }
     // `include!` is allowed only for paths inside src/ordering/. We cannot resolve
     // the literal robustly without parsing, so we reject any `include!` whose line
     // also contains `..` — the only way to escape the directory. This runs on the
@@ -650,6 +671,50 @@ fn is_ident_byte(b: u8) -> bool {
     b == b'_' || b.is_ascii_alphanumeric()
 }
 
+/// If `hay` contains an invocation of the macro `name`, return the byte offset of
+/// the macro NAME. A match is `name` as a whole identifier (not preceded by an
+/// identifier char, so a `foo::asm!` path still matches on the `asm` word
+/// boundary) followed by the invocation shape `!` + delimiter `(`/`[`/`{`.
+/// Whitespace — spaces, tabs, AND newlines — between the name, the `!`, and the
+/// delimiter is skipped, because Rust treats it as insignificant there; this is
+/// why the caller scans the whole comment-stripped source rather than one line at
+/// a time. Requiring the `!(`/`![`/`!{` shape distinguishes the macro call
+/// `asm!(...)` from the legal identifier `asm` — including the comparison
+/// `asm != 5`, where the `!` belongs to `!=` and is followed by `=`, not a
+/// delimiter.
+fn find_macro_call(hay: &str, name: &str) -> Option<usize> {
+    let hb = hay.as_bytes();
+    let wb = name.as_bytes();
+    if wb.is_empty() {
+        return None;
+    }
+    let skip_ws = |mut j: usize| {
+        while j < hb.len() && hb[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        j
+    };
+    let mut start = 0;
+    while let Some(rel) = hay[start..].find(name) {
+        let idx = start + rel;
+        let before_ok = idx == 0 || !is_ident_byte(hb[idx - 1]);
+        // `name` <ws> `!` <ws> `(`|`[`|`{` — the macro-invocation shape.
+        let after_name = skip_ws(idx + wb.len());
+        let matched = before_ok
+            && after_name < hb.len()
+            && hb[after_name] == b'!'
+            && {
+                let after_bang = skip_ws(after_name + 1);
+                after_bang < hb.len() && matches!(hb[after_bang], b'(' | b'[' | b'{')
+            };
+        if matched {
+            return Some(idx);
+        }
+        start = idx + 1;
+    }
+    None
+}
+
 /// True if `line` contains an attribute named `name`, e.g. `#[no_mangle]` or
 /// `#![no_mangle]` (with optional whitespace).
 fn contains_attr(line: &str, name: &str) -> bool {
@@ -928,6 +993,106 @@ mod tests {
     fn include_outside_dir_is_rejected() {
         let src = "include!(\"../../../etc/passwd\");\n";
         assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn inline_asm_is_rejected() {
+        // Issue #18 repro: `core::arch::asm!` executes hand-written machine code
+        // and must trip the source-purity gate.
+        let src = "pub fn danger() {\n    unsafe { core::arch::asm!(\"nop\"); }\n}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn std_arch_asm_is_rejected() {
+        let src = "unsafe { std::arch::asm!(\"nop\"); }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn asm_with_space_before_bang_is_rejected() {
+        // A macro call may put whitespace between the name and `!`.
+        let src = "unsafe { core::arch::asm !(\"nop\"); }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn asm_split_across_lines_is_rejected() {
+        // Whitespace between a macro path and its `!` is insignificant in Rust, so
+        // `asm` and `!(` on separate physical lines is a valid call and must be
+        // caught — the same line-split evasion closed for extern/no_mangle (#16).
+        let src = "unsafe { core::arch::asm\n!(\"nop\"); }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn asm_split_before_delimiter_is_rejected() {
+        // The whitespace can also fall between the `!` and the opening delimiter.
+        let src = "global_asm!\n(\".globl evil\");\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn asm_line_number_reported_for_multiline_call() {
+        // A real hit spanning lines should report the line the macro NAME is on,
+        // and prose above it must not shift the count.
+        let src = "// harmless\nlet ok = 1;\ncore::arch::asm\n!(\"nop\");\n";
+        let err = scan_source(Path::new("x.rs"), src).unwrap_err();
+        assert!(err.0.contains("x.rs:3"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn global_asm_is_rejected() {
+        let src = "global_asm!(\".globl evil\");\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn naked_asm_is_rejected() {
+        let src = "naked_asm!(\"ret\");\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn legacy_llvm_asm_is_rejected() {
+        let src = "llvm_asm!(\"nop\");\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_err());
+    }
+
+    #[test]
+    fn asm_as_identifier_is_allowed() {
+        // `asm` is a legal identifier (not a reserved keyword); a plain binding
+        // is not a macro invocation and must not trip the gate.
+        let src = "let asm = 5;\nlet x = asm + 1;\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn asm_substring_identifier_is_allowed() {
+        // `asm` inside a larger identifier (`disasm`, `phantasm`) is not the macro.
+        let src = "fn disasm() {}\nlet phantasm = 1;\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn asm_not_equal_comparison_is_allowed() {
+        // `asm != 5` is a comparison on the legal identifier `asm`; the `!` here
+        // belongs to `!=`, not a macro invocation, so it must not trip the gate.
+        let src = "let asm = 3;\nif asm != 5 { }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn asm_in_comment_is_allowed() {
+        // Prose mentioning `asm!` must not trip the gate.
+        let src = "// we never use core::arch::asm! in this module\nfn ok() {}\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
+    }
+
+    #[test]
+    fn asm_in_string_is_allowed() {
+        let src = "pub fn f() -> &'static str { \"asm! global_asm!\" }\n";
+        assert!(scan_source(Path::new("x.rs"), src).is_ok());
     }
 
     #[test]
