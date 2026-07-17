@@ -34,7 +34,18 @@ pub enum WorkerOutcome {
 }
 
 /// Spawn `cmd` and supervise it under `cfg`. Kills the child on time breach.
+///
+/// On unix the worker is placed in its own process group (`process_group(0)`)
+/// so a time-cap breach kills the WHOLE group, not just the direct worker pid.
+/// Untrusted `order()` can spawn children; killing only the worker would
+/// re-parent them to init and let them outlive the cap (issue #17).
 pub fn run_capped(cmd: &mut Command, cfg: &CapConfig) -> WorkerOutcome {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // pgid = 0 → new group whose id equals the worker pid.
+        cmd.process_group(0);
+    }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return WorkerOutcome::Crashed(format!("could not spawn worker: {e}")),
@@ -53,12 +64,39 @@ pub fn run_capped(cmd: &mut Command, cfg: &CapConfig) -> WorkerOutcome {
             Err(e) => return WorkerOutcome::Crashed(format!("wait failed: {e}")),
         }
         if start.elapsed() > cfg.time_cap {
-            let _ = child.kill();
+            kill_group(&mut child);
             let _ = child.wait();
             return WorkerOutcome::Timeout;
         }
         sleep(cfg.poll);
     }
+}
+
+/// SIGKILL the worker and every process it spawned. On unix the worker leads
+/// its own process group (see `run_capped`), so `kill -KILL -<pgid>` reaps the
+/// whole subtree; `pgid` equals the worker pid we set with `process_group(0)`.
+/// Falls back to a single-pid kill on non-unix.
+#[cfg(unix)]
+fn kill_group(child: &mut std::process::Child) {
+    let pid = child.id();
+    // Negative target = process group. Std-only: shell out to `kill`, matching
+    // the grader watchdog family's use of `ps`/`kill`.
+    let killed = Command::new("kill")
+        .arg("-KILL")
+        .arg(format!("-{pid}"))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !killed {
+        // Group kill failed (e.g. worker died before setpgid took effect);
+        // fall back to signalling the worker pid directly.
+        let _ = child.kill();
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_group(child: &mut std::process::Child) {
+    let _ = child.kill();
 }
 
 #[cfg(unix)]
@@ -109,6 +147,62 @@ mod tests {
             "watchdog did not kill promptly: {:?}",
             start.elapsed()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_kills_spawned_grandchildren() {
+        // The worker (sh) backgrounds a long sleep, records its pid, then blocks
+        // past the cap. Before the fix the watchdog SIGKILLs only sh; the
+        // backgrounded sleep is re-parented to init and outlives the cap
+        // (issue #17). The fix runs the worker in its own process group and
+        // kills the whole group.
+        let pidfile = std::env::temp_dir().join(format!("ssi-wd-{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&pidfile);
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .arg(format!("sleep 30 & echo $! > {}; sleep 30", pidfile.display()));
+        let cfg = CapConfig {
+            time_cap: Duration::from_millis(200),
+            poll: Duration::from_millis(5),
+        };
+        assert_eq!(run_capped(&mut cmd, &cfg), WorkerOutcome::Timeout);
+
+        // Read the grandchild pid the worker recorded before it was killed.
+        let mut pid_str = String::new();
+        for _ in 0..50 {
+            if let Ok(s) = std::fs::read_to_string(&pidfile) {
+                if !s.trim().is_empty() {
+                    pid_str = s;
+                    break;
+                }
+            }
+            sleep(Duration::from_millis(10));
+        }
+        let _ = std::fs::remove_file(&pidfile);
+        let gpid: i32 = pid_str.trim().parse().expect("grandchild pid recorded");
+
+        // The grandchild must be gone shortly after the cap kill. `kill -0`
+        // probes existence without signaling.
+        let mut alive = true;
+        for _ in 0..100 {
+            let ok = Command::new("kill")
+                .arg("-0")
+                .arg(gpid.to_string())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !ok {
+                alive = false;
+                break;
+            }
+            sleep(Duration::from_millis(10));
+        }
+        if alive {
+            // Reap the orphan so a red test doesn't leave it lingering.
+            let _ = Command::new("kill").arg("-KILL").arg(gpid.to_string()).status();
+        }
+        assert!(!alive, "grandchild {gpid} survived the time cap (orphaned)");
     }
 
     #[test]
