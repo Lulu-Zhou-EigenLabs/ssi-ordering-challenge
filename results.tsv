@@ -23,3 +23,4 @@
 1784149065	FAIL	NaN	NaN	time_cap test: slow
 1784149213	OK	0.910176	0.973240	time_cap test: normal
 1784150868	OK	0.910176	0.973240	post-rebase verification on latest harness
+1784318586	OK	0.910176	0.973240	post-rebase verification (harness fixes #16/#17/#19)
