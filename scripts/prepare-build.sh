@@ -44,9 +44,15 @@ GEN="$(cargo run --quiet -p ssi-purity --bin emit-deps -- "$DEPS_TOML")" || {
 write_manifest "$GEN"
 echo "prepare-build: wrote $OUT"
 
-# Freeze exact dependency versions, then vendor the full transitive tree. This
-# step needs network (to fetch declared crates); the later build is offline.
-CARGO_NET_OFFLINE=false cargo generate-lockfile
+# Vendor the full transitive tree. The COMMITTED Cargo.lock is authoritative:
+# `cargo vendor` performs a MINIMAL lock update — it honors every existing pin
+# and resolves only crates a contestant newly declared in deps.toml (absent from
+# the baseline lock). We deliberately do NOT run `cargo generate-lockfile` here:
+# that recreates the lock from scratch, floating every transitive dep to the
+# newest semver-compatible release at vendor time, which would defeat the frozen
+# lockfile and make the `--locked` build/run (benchmark.yml) non-reproducible
+# across time (issue #21). This step needs network (to fetch declared crates);
+# the later build is offline.
 mkdir -p .cargo
 CARGO_NET_OFFLINE=false cargo vendor vendor > .cargo/vendor-source.toml
 cat .cargo/config.base.toml .cargo/vendor-source.toml > .cargo/config.toml
