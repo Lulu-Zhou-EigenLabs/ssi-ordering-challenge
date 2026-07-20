@@ -209,8 +209,9 @@ contract details and a suggested approach.
 platform builds a candidate from the validated baseline + **only** the
 submission's `src/ordering/` (including its `deps.toml`), dispatches the workflow
 on it, and reads the uploaded `score.json`. The workflow: installs `cargo-deny`,
-runs `prepare-build.sh` (validate `deps.toml` → generate manifest → freeze
-lockfile → `cargo vendor` the full tree → `scan_vendored_tree` for
+runs `prepare-build.sh` (validate `deps.toml` → generate manifest → `cargo
+vendor` the full tree against the **committed** `Cargo.lock`, minimally updated
+for any newly declared crate → `scan_vendored_tree` for
 native/FFI escapes), builds `--offline --locked` from the vendored crates.io
 snapshot, then runs the scored step in a no-network namespace (`unshare -n`). It
 grades a **hidden** eval corpus — disjoint from the dev corpus, drawn from the
