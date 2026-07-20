@@ -81,8 +81,8 @@ pub use ssi_scoring::Pattern;
 const TIME_CAP_PER_MATRIX: Duration = Duration::from_secs(2);
 
 fn main() -> ExitCode {
-    // Worker mode: the ONLY process that runs contestant order(). Loads one
-    // pattern by raw line index, runs order(), writes the permutation, exits.
+    // Worker mode: the ONLY process that runs contestant order(). Reads the
+    // pattern the parent serialized, runs order(), writes the permutation, exits.
     let raw_args: Vec<String> = std::env::args().collect();
     if raw_args.get(1).map(String::as_str) == Some("--worker") {
         return ExitCode::from(worker(&raw_args[2..]) as u8);

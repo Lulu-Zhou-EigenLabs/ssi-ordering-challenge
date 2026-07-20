@@ -67,7 +67,7 @@ pub fn read_pattern(path: &Path) -> std::io::Result<Pattern> {
         return Err(err("trailing bytes after pattern"));
     }
     // Structural sanity — cheap, and matches Pattern's documented invariants.
-    if col_ptr.len() != n + 1 {
+    if col_ptr.len().checked_sub(1) != Some(n) {
         return Err(err("col_ptr length != n+1"));
     }
     if col_ptr.first() != Some(&0) {
@@ -146,6 +146,19 @@ mod tests {
         for v in [0u64, 1, 2] { bytes.extend_from_slice(&v.to_le_bytes()); }
         bytes.extend_from_slice(&1u64.to_le_bytes()); // row_idx_len = 1 (inconsistent: col_ptr says 2)
         bytes.extend_from_slice(&0u64.to_le_bytes()); // one row idx
+        std::fs::write(&path, bytes).unwrap();
+        assert!(read_pattern(&path).is_err());
+    }
+
+    #[test]
+    fn read_rejects_n_plus_one_overflow() {
+        // n=usize::MAX with small col_ptr_len — the n+1 check must not overflow.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(usize::MAX as u64).to_le_bytes()); // n
+        bytes.extend_from_slice(&1u64.to_le_bytes()); // col_ptr_len
+        bytes.extend_from_slice(&0u64.to_le_bytes()); // col_ptr[0]
+        bytes.extend_from_slice(&0u64.to_le_bytes()); // row_idx_len
+        let path = tmp("n-overflow.bin");
         std::fs::write(&path, bytes).unwrap();
         assert!(read_pattern(&path).is_err());
     }
