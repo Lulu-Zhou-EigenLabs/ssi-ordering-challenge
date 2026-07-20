@@ -101,7 +101,7 @@ fn main() -> ExitCode {
     }
 
     let corpus_file = corpus::corpus_path();
-    let corpus = corpus::corpus_indexed();
+    let corpus = corpus::corpus();
     if corpus.is_empty() {
         let reason = format!(
             "no patterns found at {}. Run from the repo root.",
@@ -127,13 +127,9 @@ fn main() -> ExitCode {
         std::env::temp_dir().join(format!("ssi-harness-{}", std::process::id())),
     );
     std::fs::create_dir_all(scratch.path()).expect("create scratch dir");
-    // The worker must load from the SAME corpus file the parent just indexed —
-    // otherwise the parent's raw line index would resolve a different matrix in
-    // the worker. corpus_path() honors $SSI_CORPUS_FILE (the grader's eval seam).
-    let jsonl_path = corpus_file.to_string_lossy().into_owned();
     let cap = watchdog::CapConfig { time_cap: TIME_CAP_PER_MATRIX, poll: std::time::Duration::from_millis(10) };
 
-    for (line_index, name, pat) in &corpus {
+    for (seq, (name, pat)) in corpus.iter().enumerate() {
         // --- AMD baseline (trusted, in-process) — guarded so a feral panic
         // or an i32-overflow-sized pattern becomes a recorded FAIL, not a
         // process abort that leaks scratch (issue #19). ---
@@ -148,12 +144,22 @@ fn main() -> ExitCode {
             }
         };
 
+        // Serialize THIS pattern once to the scratch dir; both determinism runs
+        // read it. Written by the trusted parent OUTSIDE the timed window, so its
+        // cost never counts against the per-matrix cap.
+        let pat_file = scratch.path().join(format!("{seq}-pat.bin"));
+        let _ = std::fs::remove_file(&pat_file);
+        if let Err(e) = pattern_io::write_pattern(&pat_file, pat) {
+            failed = Some(format!("{name}: failed to stage pattern for worker: {e}"));
+            break;
+        }
+
         // --- contestant ordering: capped subprocess, run twice ---
         let run_once = |tag: &str| -> Result<Vec<usize>, String> {
-            let out_perm = scratch.path().join(format!("{line_index}-{tag}.bin"));
+            let out_perm = scratch.path().join(format!("{seq}-{tag}.bin"));
             let _ = std::fs::remove_file(&out_perm);
             let mut cmd = std::process::Command::new(&exe);
-            cmd.arg("--worker").arg(&jsonl_path).arg(line_index.to_string()).arg(&out_perm);
+            cmd.arg("--worker").arg(&pat_file).arg(&out_perm);
             let t0 = Instant::now();
             match watchdog::run_capped(&mut cmd, &cap) {
                 watchdog::WorkerOutcome::Ok => perm_io::read_perm(&out_perm)
@@ -299,23 +305,20 @@ fn main() -> ExitCode {
     }
 }
 
-/// `--worker <jsonl_path> <line_index> <out_perm>`: load one pattern, run the
-/// contestant order(), write the permutation. The parent supervises this under
-/// the time cap and SIGKILLs it on breach. A panic aborts the process (non-zero
-/// exit, no perm file) — the parent treats that as a FAIL.
+/// `--worker <pattern_file> <out_perm>`: read the one pattern the parent
+/// serialized for this matrix, run the contestant order(), write the
+/// permutation. The parent supervises this under the time cap and SIGKILLs it on
+/// breach. A panic aborts the process (non-zero exit, no perm file) — the parent
+/// treats that as a FAIL.
 fn worker(args: &[String]) -> i32 {
-    let (Some(jsonl), Some(idx_s), Some(out)) = (args.first(), args.get(1), args.get(2)) else {
-        eprintln!("--worker: usage: --worker <jsonl_path> <line_index> <out_perm>");
+    let (Some(pattern_file), Some(out)) = (args.first(), args.get(1)) else {
+        eprintln!("--worker: usage: --worker <pattern_file> <out_perm>");
         return 2;
     };
-    let Ok(line_index) = idx_s.parse::<usize>() else {
-        eprintln!("--worker: line_index must be a non-negative integer");
-        return 2;
-    };
-    let pat = match ssi_scoring::load_pattern_jsonl_line(Path::new(jsonl), line_index) {
+    let pat = match pattern_io::read_pattern(Path::new(pattern_file)) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("worker: failed to load pattern {line_index} from {jsonl}: {e}");
+            eprintln!("worker: failed to read pattern from {pattern_file}: {e}");
             return 3;
         }
     };
