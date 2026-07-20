@@ -40,11 +40,10 @@ code sees a matrix it is a pure graph.
 
 One reader parses a line into a `Pattern`:
 `ssi_scoring::pattern_from_jsonl_line`
-([`ssi-scoring/src/loader.rs`](../ssi-scoring/src/loader.rs)). The harness loads
-the whole sample with `load_corpus_jsonl`; the grader can load one line by index
-with `load_pattern_jsonl_line` — **both route through the same parse core**, so
-there is no second parser that could silently disagree (Invariant 2 at the
-parsing boundary). The stored pattern is the full symmetrized pattern and
+([`ssi-scoring/src/loader.rs`](../ssi-scoring/src/loader.rs)). Both the harness
+and the grader load the whole sample with `load_corpus_jsonl`, which routes
+every line through that one parse core, so there is no second parser that could
+silently disagree (Invariant 2 at the parsing boundary). The stored pattern is the full symmetrized pattern and
 **includes the diagonal**; the reader drops `i == j` to produce the off-diagonal
 contract `Pattern`.
 
@@ -92,16 +91,17 @@ matrix is scored.
 
 ### Load the corpus
 
-[`src/main.rs`](../src/main.rs) calls `corpus::corpus_indexed()`
+[`src/main.rs`](../src/main.rs) calls `corpus::corpus()`
 ([`src/corpus.rs`](../src/corpus.rs)), which loads every pattern in
 the corpus file in file order via the shared
-`ssi_scoring::load_corpus_jsonl` reader, tagging each with its 0-based raw line
-index so the parent can hand the worker subprocess the exact line to load. An
+`ssi_scoring::load_corpus_jsonl` reader. The parent parses the whole corpus
+once here, so it can later hand each worker subprocess a single already-parsed
+pattern (see Stage B) rather than making the worker re-read the file. An
 empty or missing corpus aborts the run (run from the repo root).
 
 ### Per matrix (the loop at [`src/main.rs`](../src/main.rs))
 
-For each `(raw_index, name, pattern)`:
+For each `(name, pattern)`:
 
 1. **AMD baseline** — [`src/main.rs`](../src/main.rs):
    `ssi_scoring::amd_baseline(pat)` runs feral's AMD, then
@@ -109,9 +109,11 @@ For each `(raw_index, name, pattern)`:
    anchor for this matrix.
 
 2. **Stage B — run your `order()`, twice, in a killable subprocess**
-   ([`src/main.rs`](../src/main.rs), `run_once`): each call re-launches this
-   same binary in `--worker` mode (passing the matrix's raw line index), which
-   loads the pattern, runs `order()`, and writes the permutation to a scratch
+   ([`src/main.rs`](../src/main.rs), `run_once`): the parent serializes the
+   matrix's already-parsed `Pattern` once to a scratch file
+   ([`src/pattern_io.rs`](../src/pattern_io.rs)), then each call re-launches this
+   same binary in `--worker` mode (passing that pattern file), which
+   reads the pattern, runs `order()`, and writes the permutation to a scratch
    file. The parent supervises that child with the watchdog
    ([`src/watchdog.rs`](../src/watchdog.rs)):
    - if the child exceeds `TIME_CAP_PER_MATRIX = 2s` it is **SIGKILLed** and the
