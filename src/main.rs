@@ -47,6 +47,7 @@
 mod corpus;
 mod failsafe;
 mod ordering;
+mod pattern_io;
 mod perm_io;
 mod purity;
 mod watchdog;
