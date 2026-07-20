@@ -6,7 +6,15 @@
 //! bijection of `0..n`, deterministic (the harness runs `order()` twice and
 //! requires identical output), and return within the 2 s/matrix cap.
 //!
-//! ## Approach: per-matrix best-of {AMD, AMF, METIS-ND} with cost envelopes
+//! ## Approach: per-matrix tiered best-of portfolio with cost envelopes
+//!
+//! (2026-07-14) Extended from best-of {AMD, AMF, METIS} to a tiered portfolio:
+//! AMD/AMF dense-threshold variants at large scale, METIS/Scotch seed diversity
+//! at mid scale, KaHIP + broad seed/mode diversity on small matrices. Tier
+//! envelopes re-measured via `bench.rs` (test-only); worst local `order()` is
+//! ≈0.25 s. See `memory/experiments/0002-tiered-best-of-portfolio.md`.
+//!
+//! ## Original design notes (still accurate for the core mechanism)
 //!
 //! The score is a geomean of per-matrix `flops(yours)/flops(AMD)` ratios, so
 //! choosing, *per matrix*, the cheapest of several candidate orderings can only
@@ -59,6 +67,9 @@
 
 use crate::Pattern;
 
+#[cfg(test)]
+mod bench;
+
 use feral::ordering::amd::permute_pattern;
 use feral::ordering::elimination_tree::EliminationTree;
 use feral::sparse::csc::CscPattern as ScoringPattern;
@@ -76,7 +87,41 @@ const AMF_MAX_NNZ: usize = 1_300_000;
 /// of magnitude below that scale, plus an n cap as defense-in-depth. Within this
 /// envelope the worst measured METIS child time is ≈0.13 s (≈0.65 s at 5x).
 const METIS_MAX_N: usize = 120_000;
-const METIS_MAX_NNZ: usize = 300_000;
+const METIS_MAX_NNZ: usize = 150_000;
+
+/// Cheap-diversity tier: AMD/AMF dense-threshold variants. These are the same
+/// near-linear quotient-graph loop as the baseline (no structural volatility),
+/// so they get a wide envelope; each costs about one extra AMD/AMF run.
+const VARIANT_MAX_N: usize = 150_000;
+const VARIANT_MAX_NNZ: usize = 250_000;
+
+/// Scotch tier: Scotch (default options) adds wins METIS misses on mid-size
+/// structured patterns. Measured cost ≈2.8 µs/nnz. Where it overlaps METIS
+/// (≈2.3 µs/nnz) both run, so the combined band is capped at nnz<70k to keep
+/// the whole candidate stack ≤~0.35 s local at the band top.
+const SCOTCH_MAX_N: usize = 60_000;
+const SCOTCH_MAX_NNZ: usize = 70_000;
+
+/// Small tier: cheap AMD/AMF parameter variants (µs–ms at this scale).
+const SMALL_MAX_N: usize = 15_000;
+const SMALL_MAX_NNZ: usize = 80_000;
+
+/// Extra-seed tier: second/third partitioner seeds. Each extra seed re-pays the
+/// full partitioner cost, so this is confined to nnz<30k where a seed is
+/// ≤~70 ms.
+const SEEDS_MAX_N: usize = 15_000;
+const SEEDS_MAX_NNZ: usize = 30_000;
+
+/// Tiny tier: the most expensive per-nnz diversity (KaHIP, more METIS params).
+/// KaHIP measured up to ~0.7 s at nnz≈258k, so it is confined to genuinely
+/// small problems where it is a few ms.
+const TINY_MAX_N: usize = 10_000;
+const TINY_MAX_NNZ: usize = 25_000;
+
+/// Micro tier: sub-1k problems (the lt_1k score bucket). Every candidate here
+/// is ~1 ms, so we afford broad seed/mode diversity across all families.
+const MICRO_MAX_N: usize = 1_200;
+const MICRO_MAX_NNZ: usize = 60_000;
 
 /// Return an elimination order for `pattern` (best-of over the ordering family).
 pub fn order(pattern: &Pattern) -> Vec<usize> {
@@ -120,7 +165,10 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
     // out or fails. It is also the grader's own baseline, so it cannot time out.
     let amd = feral_amd::amd_order(&core).expect("feral AMD ordering failed");
     let mut best_perm: Vec<usize> = amd.into_iter().map(|x| x as usize).collect();
-    let mut best_flops: u64 = flops_of(&scoring_pat, &best_perm);
+    // Scored lazily: on the largest matrices no extra candidate is gated in,
+    // and skipping the symbolic pass keeps the AMD-only path as fast as the
+    // grader's own baseline run.
+    let mut best_flops: Option<u64> = None;
 
     // Candidate set gated purely by (n, nnz) so both required runs agree, and
     // sized (from full-corpus wall-time measurement) so the total child time
@@ -139,9 +187,10 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
         if !is_bijection(&perm, n) {
             return;
         }
+        let baseline = *best_flops.get_or_insert_with(|| flops_of(&scoring_pat, &best_perm));
         let f = flops_of(&scoring_pat, &perm);
-        if f < best_flops {
-            best_flops = f;
+        if f < baseline {
+            best_flops = Some(f);
             best_perm = perm;
         }
     };
@@ -151,12 +200,195 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
         consider(&|| feral_amf::amf_order(&core));
     }
 
+    // AMD/AMF dense-threshold variants — same near-linear loop, different
+    // dense-row deferral policy. `dense_alpha = -1.0` suppresses deferral for
+    // all but true hubs (threshold n-2); on KKT patterns with moderately dense
+    // constraint rows this can beat the default sqrt(n) threshold either way.
+    if n < VARIANT_MAX_N && nnz < VARIANT_MAX_NNZ {
+        consider(&|| {
+            feral_amd::amd_order_opts(
+                &core,
+                &feral_amd::AmdOptions {
+                    aggressive: true,
+                    dense_alpha: -1.0,
+                },
+            )
+            .map(|(p, _)| p)
+        });
+        consider(&|| {
+            feral_amf::amf_order_opts(&core, &feral_amf::AmfOptions { dense_alpha: -1.0 })
+                .map(|(p, _)| p)
+        });
+    }
+
     // METIS nested dissection — bounded by nnz primarily (its cost driver) plus
     // an n cap; `seed = 1` (via default) keeps it deterministic.
     if n < METIS_MAX_N && nnz < METIS_MAX_NNZ {
         consider(&|| {
             feral_metis::metis_order_full(&core, &feral_metis::MetisOptions::default())
                 .map(|(p, _, _)| p)
+        });
+    }
+
+    // Scotch (default options) — finds wins METIS misses; complementary
+    // coarsening/compression profile. Band capped so METIS+Scotch together
+    // stay ≤~0.35 s local at the top.
+    if n < SCOTCH_MAX_N && nnz < SCOTCH_MAX_NNZ {
+        consider(&|| feral_scotch::scotch_order(&core));
+    }
+
+    // Small tier: cheap AMD/AMF parameter variants — near-linear cost, so they
+    // are safe wherever the base AMD/AMF run.
+    if n < SMALL_MAX_N && nnz < SMALL_MAX_NNZ {
+        consider(&|| {
+            feral_amd::amd_order_opts(
+                &core,
+                &feral_amd::AmdOptions {
+                    aggressive: true,
+                    dense_alpha: 4.0,
+                },
+            )
+            .map(|(p, _)| p)
+        });
+        consider(&|| {
+            feral_amf::amf_order_opts(&core, &feral_amf::AmfOptions { dense_alpha: 4.0 })
+                .map(|(p, _)| p)
+        });
+        consider(&|| {
+            feral_amd::amd_order_opts(
+                &core,
+                &feral_amd::AmdOptions {
+                    aggressive: false,
+                    dense_alpha: 10.0,
+                },
+            )
+            .map(|(p, _)| p)
+        });
+    }
+
+    // Extra partitioner seeds — each re-pays the full partitioner cost, so
+    // confined to small nnz.
+    if n < SEEDS_MAX_N && nnz < SEEDS_MAX_NNZ {
+        consider(&|| {
+            let opts = feral_metis::MetisOptions {
+                seed: 2,
+                ..feral_metis::MetisOptions::default()
+            };
+            feral_metis::metis_order_full(&core, &opts).map(|(p, _, _)| p)
+        });
+        consider(&|| {
+            let opts = feral_metis::MetisOptions {
+                seed: 3,
+                nd_to_amd_switch: 64,
+                ..feral_metis::MetisOptions::default()
+            };
+            feral_metis::metis_order_full(&core, &opts).map(|(p, _, _)| p)
+        });
+        consider(&|| {
+            let opts = feral_scotch::ScotchOptions {
+                seed: 1,
+                ..feral_scotch::ScotchOptions::default()
+            };
+            feral_scotch::scotch_order_full(&core, &opts).map(|(p, _, _)| p)
+        });
+    }
+
+    // Tiny tier: KaHIP and an aggressive METIS config — the most expensive
+    // diversity per nnz, confined to problems where it is a few ms.
+    if n < TINY_MAX_N && nnz < TINY_MAX_NNZ {
+        consider(&|| feral_kahip::kahip_order(&core));
+        consider(&|| {
+            let opts = feral_metis::MetisOptions {
+                seed: 4,
+                niparts: 12,
+                max_imbalance: 0.10,
+                ..feral_metis::MetisOptions::default()
+            };
+            feral_metis::metis_order_full(&core, &opts).map(|(p, _, _)| p)
+        });
+    }
+
+    // Micro tier: broad seed/mode diversity for the lt_1k bucket, where each
+    // candidate is ~1 ms and the bucket carries 0.30 of the score. The
+    // expensive modes (KaHIP Eco/Strong, extra partitioner seeds) are further
+    // gated by nnz: a small-n but DENSE pattern (e.g. n=341, nnz=44k) costs
+    // ~0.3 s through the full set, which is too thin a margin at a 5x-slower
+    // grader.
+    let micro_dense = nnz >= 20_000;
+    if n < MICRO_MAX_N && nnz < MICRO_MAX_NNZ && !micro_dense {
+        for seed in [5u64, 6, 7, 8, 10, 11, 12, 13] {
+            consider(&|| {
+                let opts = feral_metis::MetisOptions {
+                    seed,
+                    ..feral_metis::MetisOptions::default()
+                };
+                feral_metis::metis_order_full(&core, &opts).map(|(p, _, _)| p)
+            });
+        }
+        consider(&|| {
+            let opts = feral_metis::MetisOptions {
+                seed: 9,
+                nd_to_amd_switch: 48,
+                coarsen_floor: 60,
+                ..feral_metis::MetisOptions::default()
+            };
+            feral_metis::metis_order_full(&core, &opts).map(|(p, _, _)| p)
+        });
+        for seed in [2u64, 3, 4, 5] {
+            consider(&|| {
+                let opts = feral_kahip::KahipOptions {
+                    seed,
+                    mode: feral_kahip::KahipMode::Fast,
+                };
+                feral_kahip::kahip_order_full(&core, &opts).map(|(p, _, _)| p)
+            });
+        }
+        consider(&|| {
+            let opts = feral_kahip::KahipOptions {
+                seed: 1,
+                mode: feral_kahip::KahipMode::Eco,
+            };
+            feral_kahip::kahip_order_full(&core, &opts).map(|(p, _, _)| p)
+        });
+        consider(&|| {
+            let opts = feral_kahip::KahipOptions {
+                seed: 1,
+                mode: feral_kahip::KahipMode::Strong,
+            };
+            feral_kahip::kahip_order_full(&core, &opts).map(|(p, _, _)| p)
+        });
+        for seed in [1u64, 7, 42] {
+            consider(&|| {
+                let opts = feral_scotch::ScotchOptions {
+                    seed,
+                    ..feral_scotch::ScotchOptions::default()
+                };
+                feral_scotch::scotch_order_full(&core, &opts).map(|(p, _, _)| p)
+            });
+        }
+        consider(&|| {
+            feral_amd::amd_order_opts(
+                &core,
+                &feral_amd::AmdOptions {
+                    aggressive: false,
+                    dense_alpha: 10.0,
+                },
+            )
+            .map(|(p, _)| p)
+        });
+        consider(&|| {
+            feral_amf::amf_order_opts(&core, &feral_amf::AmfOptions { dense_alpha: 4.0 })
+                .map(|(p, _)| p)
+        });
+        consider(&|| {
+            feral_amd::amd_order_opts(
+                &core,
+                &feral_amd::AmdOptions {
+                    aggressive: true,
+                    dense_alpha: 4.0,
+                },
+            )
+            .map(|(p, _)| p)
         });
     }
 
