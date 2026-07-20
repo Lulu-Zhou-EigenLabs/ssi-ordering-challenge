@@ -50,9 +50,7 @@ mod loader;
 mod pattern;
 mod aggregate;
 
-pub use loader::{
-    load_corpus_jsonl, load_pattern_jsonl_line, pattern_from_jsonl_line, LoadError,
-};
+pub use loader::{load_corpus_jsonl, pattern_from_jsonl_line, LoadError};
 pub use pattern::Pattern;
 pub use aggregate::{
     combine, geomean, size_bucket, validate_permutation, BucketAcc, BUCKETS,

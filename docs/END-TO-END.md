@@ -110,11 +110,12 @@ optimization problem to a single score:
   filter to off-diagonal entries anyway, so dropping it at one place
   (`pattern_from_jsonl_line`) gives a single canonical representation. See
   [`WORKFLOW.md`](WORKFLOW.md) §1.
-- **One reader.** `pattern_from_jsonl_line` is the single parse core; the
-  harness loads the whole corpus via `load_corpus_jsonl`
-  (`ssi-scoring/src/loader.rs:151`) and a future grader can load one line by
-  index via `load_pattern_jsonl_line` (`:175`) — both route through the same
-  core, so no second parser can silently disagree.
+- **One reader.** `pattern_from_jsonl_line` is the single parse core; both the
+  harness and the grader load the whole corpus via `load_corpus_jsonl`
+  (`ssi-scoring/src/loader.rs`), which routes every line through that core, so
+  no second parser can silently disagree. The parent parses once and hands each
+  worker subprocess the already-parsed `Pattern` (serialized via
+  `src/pattern_io.rs`), so the worker never re-reads or re-parses the corpus.
 - **`flops = Σ c_j²`, `nnz_l = Σ c_j`.** `c_j` is the exact column count of the
   factor L for column `j` (Gilbert–Ng–Peyton). `Σ c_j` is the fill (nnz of L);
   `Σ c_j²` is a deterministic, hardware-independent proxy for the LDLᵀ
@@ -139,7 +140,7 @@ partial credit):
 | Stage | What happens | Code |
 |---|---|---|
 | **A — purity & license** | scan `src/ordering/` for foreign-code escapes (`build.rs`, FFI, `#[no_mangle]`/`#[link]`, proc-macros, `include!` escapes); parse `src/ordering/deps.toml`; run `cargo-deny` (RequireDeny — mandatory). The grader also scans the vendored dependency tree for `*-sys`/`links`/C-build-deps/prebuilt blobs. | `src/purity.rs` → `ssi-purity` |
-| **load corpus** | read every line of the corpus file into `(raw_index, name, Pattern)` | `corpus::corpus_indexed()` (`src/corpus.rs`) |
+| **load corpus** | parse every line of the corpus file into `(name, Pattern)`, once | `corpus::corpus()` (`src/corpus.rs`) |
 | **B — run order()** | run `order()` **twice** in a killable child process, timed against a 2 s/matrix cap; a panic or cap breach fails the run | `src/main.rs` (`run_once`) |
 | **C — validate** | the returned permutation must be a true bijection of `0..n` | `validate_permutation` (`src/main.rs`) |
 | **E — determinism** | the two `order()` runs must return byte-identical permutations | `src/main.rs` (`perm1 != perm2`) |
