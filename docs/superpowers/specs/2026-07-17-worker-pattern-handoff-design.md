@@ -80,11 +80,25 @@ panic — matching `perm_io`.
   exactly as today. Corpus path + line-index args removed; the `jsonl_path`
   binding and the "worker must load from the SAME corpus file" comment go away.
 - In the per-matrix loop, before the two `run_once` calls, serialize the pattern
-  **once** to `scratch/<seq>-pat.bin` (`pattern_io::write_pattern`). Both the `a`
+  **once** to `scratch/{seq}-pat.bin` (`pattern_io::write_pattern`). Both the `a`
   and `b` runs pass that one file (one-per-matrix, shared — chosen). The parent
   write happens OUTSIDE the timed window.
-- The scratch-file stem no longer needs to be a raw file-line index; a plain
-  enumeration counter suffices (see corpus.rs below).
+
+Scratch filename scheme (all inside the PID-unique `ssi-harness-<pid>` dir, so
+runs never collide with each other):
+
+- `{seq}-pat.bin` — the serialized pattern (worker input), written once by the
+  parent per matrix.
+- `{seq}-a.bin`, `{seq}-b.bin` — the two perm outputs (unchanged).
+
+Uniqueness holds on every axis: `{seq}` (the per-matrix counter) disambiguates
+across matrices; the fixed kind label (`pat` vs `a` vs `b`) disambiguates the
+files of one matrix. `seq` is the plain `.enumerate()` counter from the call
+site (0,1,2,…), NOT a raw file-line index — the worker no longer resolves it
+back to a corpus line, so `corpus_indexed` drops raw-index tracking entirely.
+Like the perm files, the parent may `remove_file` a stale `{seq}-pat.bin` before
+writing (belt-and-suspenders); a missing/short/malformed pattern file surfaces
+as an `io::Error` from `read_pattern`, never a silent reuse.
 
 ### `src/corpus.rs`
 
