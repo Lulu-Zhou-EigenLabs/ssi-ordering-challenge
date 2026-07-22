@@ -346,6 +346,25 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
             dense_alpha: 2.0,
         };
         consider(&|| feral_amd::amd_order_opts(&core, &amd_robust2).map(|(p, ..)| p));
+
+        // Dense-detection FULLY DISABLED (dense_alpha < 0): AMD treats no row as
+        // "dense", so it never defers high-degree coupling rows. On the KKT/saddle
+        // systems here a handful of dense coupling rows otherwise pollute AMD's
+        // degree-based pivots; keeping them in the normal min-degree flow yields a
+        // genuinely different (often lower-flop) order. Empirically (idea-loop
+        // probe) this beats the {AMD,AMF} best-of on ~219/300 matrices, at AMD
+        // speed. Best-of makes it pure upside. Both absorption settings tried
+        // since they give distinct orders.
+        let amd_nodense = feral_amd::AmdOptions {
+            aggressive: false,
+            dense_alpha: -1.0,
+        };
+        consider(&|| feral_amd::amd_order_opts(&core, &amd_nodense).map(|(p, ..)| p));
+        let amd_nodense_agg = feral_amd::AmdOptions {
+            aggressive: true,
+            dense_alpha: -1.0,
+        };
+        consider(&|| feral_amd::amd_order_opts(&core, &amd_nodense_agg).map(|(p, ..)| p));
     }
 
     // Reverse Cuthill–McKee — a pure-Rust, O(nnz) ordering from a family
