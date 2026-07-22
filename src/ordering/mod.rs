@@ -96,6 +96,19 @@ const AMF_MAX_NNZ: usize = 1_500_000;
 /// passes onto dense large-n matrices and could move the worst case.
 const MEDIUM_MAX_N: usize = 60_000;
 const MEDIUM_MAX_NNZ: usize = 400_000;
+/// nnz cap for the THREE extra sweep-found AMF variants (α1/α16/α-1). The sweep
+/// showed AMF is cheap even on LARGE-SPARSE matrices (faclay75 nnz=1.38M: all
+/// three AMF passes total only ~0.64 s at 5×), and these variants are the UNIQUE
+/// min-flops ordering on several big gt_10k matrices (faclay75, pooling_sppc3pq,
+/// kissing2, arki0013). So the gate is wide; the real timing risk is the SUM with
+/// other candidates on high-nnz mediums, which is bounded by also requiring the
+/// tighter MEDIUM/ROBUST-gated variants to have dropped out by then (n cap).
+const AMF_SWEEP_MAX_NNZ: usize = 1_500_000;
+const AMF_SWEEP_MAX_N: usize = 300_000;
+/// nnz ceiling for the extra sweep-found AMD α1/α16 passes in the MEDIUM block.
+/// Excludes high-nnz dense mediums (nuclear104 nnz=258k) that already load the
+/// candidate stack near the 2 s cap; below it each AMD pass is a few ms.
+const SWEEP_EXTRA_MAX_NNZ: usize = 150_000;
 
 /// NON-AGGRESSIVE AMD envelope. `aggressive = false` is a genuinely different
 /// elimination order (not just a dense-threshold tweak). It runs at baseline AMD
@@ -315,6 +328,47 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
             ..Default::default()
         };
         consider(&|| feral_amf::amf_order_opts(&core, &amf_opts2).map(|(p, ..)| p));
+
+        // Aggressive AMD α1 and α16 — the two sweep-found AMD variants that still
+        // add unique wins beyond the existing α{-1,2,5,10} set. Gated to genuinely
+        // medium nnz (< SWEEP_EXTRA_MAX_NNZ): on high-nnz DENSE mediums (e.g.
+        // nuclear104 n=39k nnz=258k, density 6.6) the candidate stack is already
+        // near the 2 s cap, and adding two more AMD passes there breached it
+        // (measured 2.46 s at 5×). At nnz < 150k each AMD pass is a few ms.
+        if nnz < SWEEP_EXTRA_MAX_NNZ {
+            let amd_opts1 = feral_amd::AmdOptions { aggressive: true, dense_alpha: 1.0 };
+            consider(&|| feral_amd::amd_order_opts(&core, &amd_opts1).map(|(p, ..)| p));
+            let amd_opts16 = feral_amd::AmdOptions { aggressive: true, dense_alpha: 16.0 };
+            consider(&|| feral_amd::amd_order_opts(&core, &amd_opts16).map(|(p, ..)| p));
+        }
+    }
+
+    // AMF dense_alpha SWEEP (α1, α16, dense-detection DISABLED α=-1). The
+    // comprehensive per-matrix sweep found each is the SOLE min-flops ordering on
+    // several matrices the α2/α5/α10 AMF variants miss. AMF cost scales with nnz,
+    // so these THREE extra AMF passes are gated TIGHTER than the MEDIUM block
+    // (nnz < AMF_SWEEP_MAX_NNZ) to keep the per-matrix candidate-time sum safely
+    // under the 2s cap on high-nnz mediums (e.g. nuclear104 nnz=258k). Best-of.
+    // On big-but-sparse matrices the three AMF passes each cost ~0.6 s at 5× and
+    // TOGETHER (with the other candidates) can exceed the 2 s cap on the single
+    // heaviest matrix (faclay75, nnz=1.38M: 3×AMF = 1.90 s at 5×). But those same
+    // matrices are exactly where an AMF sweep variant is the unique min, and the
+    // three tie there — so run all THREE only up to a moderate nnz, and just ONE
+    // (α-1, the strongest single) on the largest, preserving the win at ~0.6 s.
+    // Two disjoint safe regimes (avoiding the 130k–400k nnz "dead zone" where
+    // dense-ish mediums like nuclear104 already load the candidate stack near the
+    // cap and have no slack for extra AMF passes):
+    //  (a) nnz < 130k: three AMF passes are cheap (<0.25 s at 5× total).
+    //  (b) LARGE-SPARSE (nnz >= 400k, low density): one AMF α-1 pass; here AMF is
+    //      fast (sparse) AND is the unique min (faclay75, kissing2, pooling_*).
+    if n < AMF_SWEEP_MAX_N && nnz < 130_000 {
+        for da in [1.0f64, 16.0, -1.0] {
+            let amf_a = feral_amf::AmfOptions { dense_alpha: da, ..Default::default() };
+            consider(&|| feral_amf::amf_order_opts(&core, &amf_a).map(|(p, ..)| p));
+        }
+    } else if n < AMF_SWEEP_MAX_N && nnz >= 400_000 && nnz < AMF_SWEEP_MAX_NNZ {
+        let amf_nd = feral_amf::AmfOptions { dense_alpha: -1.0, ..Default::default() };
+        consider(&|| feral_amf::amf_order_opts(&core, &amf_nd).map(|(p, ..)| p));
     }
 
     // NON-AGGRESSIVE AMD — a genuinely DIFFERENT elimination order from every
