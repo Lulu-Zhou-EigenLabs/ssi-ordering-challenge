@@ -529,6 +529,17 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
             ..Default::default()
         };
         consider(&|| feral_metis::metis_order_full(&core, &metis_tuned).map(|(p, _, _)| p));
+
+        // METIS with TIGHT imbalance (max_imbalance 0.05 = near-balanced
+        // separators) — a distinct separator regime discovered by the live
+        // research loop (the sweep never varied max_imbalance/two_hop). Wins on
+        // ~8 matrices the default/tuned METIS miss. Same gate as metis_tuned.
+        let metis_bal = feral_metis::MetisOptions {
+            max_imbalance: 0.05,
+            two_hop_ratio_threshold: 0.90,
+            ..Default::default()
+        };
+        consider(&|| feral_metis::metis_order_full(&core, &metis_bal).map(|(p, _, _)| p));
     }
 
     // A third, HIGH-TRIAL METIS on tiny/small matrices only — many initial
@@ -562,6 +573,20 @@ pub fn order(pattern: &Pattern) -> Vec<usize> {
         };
         consider(&|| {
             feral_scotch::scotch_order_full(&core, &scotch_tuned).map(|(p, _, _)| p)
+        });
+
+        // Scotch with LOOSE compression (compress_ratio 0.9 = compress almost
+        // always) + wider amd_switch — a distinct separator discovered by the
+        // live research loop (not in the parameter sweep): wins on ~9 matrices the
+        // default/nt10 Scotch variants miss, ~1.1 s at 5×. Best-of => pure upside.
+        let scotch_cr = feral_scotch::ScotchOptions {
+            compress_ratio: 0.9,
+            amd_switch: 200,
+            n_sep_trials: 5,
+            ..Default::default()
+        };
+        consider(&|| {
+            feral_scotch::scotch_order_full(&core, &scotch_cr).map(|(p, _, _)| p)
         });
     }
 
